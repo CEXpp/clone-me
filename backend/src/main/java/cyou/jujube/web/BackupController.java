@@ -8,6 +8,7 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+/** 受管理员认证保护的备份列表、创建和下载接口。 文件路径由 BackupService 按固定格式校验，接口不能接收任意磁盘路径。 */
 @RestController
 @RequestMapping("/api/admin/backups")
 public class BackupController {

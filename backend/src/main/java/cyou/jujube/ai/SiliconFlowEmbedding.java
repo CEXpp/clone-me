@@ -13,6 +13,7 @@ import java.time.Duration;
 import java.util.Map;
 import org.springframework.stereotype.Service;
 
+/** 调用硅基流动的免费 BAAI/bge-m3，并严格校验一条 1024 维的有限非零向量。 返回前做 L2 归一化，保证建索引和查询使用同一数学口径；即使免费也保留调用账目和耗时。 */
 @Service
 public class SiliconFlowEmbedding implements EmbeddingProvider {
   private final CloneProperties props;
@@ -32,10 +33,12 @@ public class SiliconFlowEmbedding implements EmbeddingProvider {
     return props.embeddingKey() != null && !props.embeddingKey().isBlank();
   }
 
+  /** 将端点、模型、维度及归一化版本组成指纹，防止配置改变后错误复用缓存或索引。 */
   public String fingerprint() {
     return "siliconflow|" + props.embeddingUrl() + "|" + props.embeddingModel() + "|1024|l2|v1";
   }
 
+  /** 只允许已选定免费模型；校验响应数量、维度和有限数值后归一化，不能把无效向量写入索引。 */
   @Override
   public float[] embed(String requestId, String text) {
     if (!configured()) throw ApiException.unavailable("EMBEDDING_NOT_CONFIGURED", "尚未配置向量模型");

@@ -15,6 +15,7 @@ import org.apache.pdfbox.pdmodel.font.*;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+/** 验证资料解析、说话者归属及密码学工具的边界，使用临时文件和固定测试输入。 重点防止他人聊天被归入本人，以及非法文档或篡改密文被误接受。 */
 class ParserAndSecurityTest {
   @TempDir Path temp;
   final DocumentParser parser = new DocumentParser();

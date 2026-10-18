@@ -9,6 +9,10 @@ import java.time.Clock;
 import java.util.*;
 import org.springframework.stereotype.Service;
 
+/**
+ * 创建本人确认资料的发布快照，并维护当前可查询的知识版本指针。 候选编辑不会直接影响已发布正文；新版本先构建完成再切换，失败时原版本继续服务。
+ * 紧急撤回通过实时关联候选记录生效，回退旧版本也不能恢复已撤回的事实。
+ */
 @Service
 public class KnowledgeService {
   private final Database db;
@@ -24,6 +28,7 @@ public class KnowledgeService {
     this.clock = clock;
   }
 
+  /** 在短事务中复制可发布记录形成快照，并排队构建；构建期间仍使用旧版本回答。 */
   public Map<String, Object> release(String label, boolean keywordOnly) {
     if (label == null || label.isBlank() || label.length() > 100)
       throw ApiException.badRequest("INVALID_LABEL", "发布版本名称需为 1–100 个字符");
@@ -62,6 +67,7 @@ public class KnowledgeService {
     return Map.of("releaseId", id, "jobId", job, "status", "BUILDING");
   }
 
+  /** 只允许切换到已就绪版本；回退仅改变当前版本指针，撤回限制继续实时生效。 */
   public void activate(String id) {
     db.transaction(
         sql -> {

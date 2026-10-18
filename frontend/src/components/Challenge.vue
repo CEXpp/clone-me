@@ -1,4 +1,8 @@
 <script setup lang="ts">
+/**
+ * 按需加载 Turnstile 人机验证组件，只向父组件传递短期令牌。
+ * 令牌失效或报错立即清空，组件卸载后不再挂载异步加载的实例；是否通过以后端校验为准。
+ */
 import { onMounted, onBeforeUnmount, ref } from "vue";
 declare global {
   interface Window {

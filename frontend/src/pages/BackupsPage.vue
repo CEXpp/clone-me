@@ -1,4 +1,8 @@
 <script setup lang="ts">
+/**
+ * 展示备份和通知状态，提供主动备份与受保护下载。
+ * 下载通过携带认证 Cookie 的请求获取文件，不生成公开可访问的备份地址。
+ */
 import { onMounted, ref } from "vue";
 import { api, downloadBackup } from "../api";
 import { useAction, date, notify } from "../shared";

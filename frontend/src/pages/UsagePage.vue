@@ -1,4 +1,8 @@
 <script setup lang="ts">
+/**
+ * 展示预算与调用账本，管理付费总开关、决策供应商和不确定费用对账。
+ * 后端金额单位为微元，展示时才换算成人民币；供应商概率阈值需要分别校准。
+ */
 import { computed, onMounted, ref } from "vue";
 import { api } from "../api";
 import { useAction, money, date, notify } from "../shared";

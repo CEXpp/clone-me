@@ -17,6 +17,10 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
+/**
+ * 创建本人资料的一致性备份，排除访客聊天库、管理员认证记录和环境密钥。 先用 SQLite 生成一致性数据库快照，在副本中脱敏，再和原始资料一起压缩。 备份最多保留七份且总量不超过
+ * 500MB；下载名称受白名单限制，防止任意路径读取。
+ */
 @Service
 public class BackupService {
   private static final Logger LOG = LoggerFactory.getLogger(BackupService.class);
@@ -49,6 +53,7 @@ public class BackupService {
     }
   }
 
+  /** 生成一致性副本、删除副本里的认证信息、压缩本人资料，再轮转旧备份；失败时清理本次半成品。 */
   public synchronized Map<String, Object> create() throws IOException {
     Path directory = props.root().resolve("backups");
     Files.createDirectories(directory);
@@ -123,6 +128,7 @@ public class BackupService {
     }
   }
 
+  /** 按创建时间删除最早备份，直到份数与总容量同时满足限制；只处理固定命名格式的文件。 */
   private void rotate(Path directory) throws IOException {
     List<Path> files;
     try (var stream = Files.list(directory)) {
@@ -159,6 +165,7 @@ public class BackupService {
     }
   }
 
+  /** 只接受备份文件名白名单，不能利用上级目录片段下载其他文件。 */
   public Path archive(String name) {
     if (!name.matches("backup-[0-9]+-[a-f0-9]{8}\\.zip")) throw ApiException.missing();
     Path path = props.root().resolve("backups").resolve(name);

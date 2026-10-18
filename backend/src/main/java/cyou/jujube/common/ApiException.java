@@ -1,5 +1,6 @@
 package cyou.jujube.common;
 
+/** 可预期的业务失败，携带 HTTP 状态、稳定错误码和可向用户展示的中文提示。 前端按错误码决定是否要求登录、验证或重试，不应依赖提示文案做分支判断。 */
 public class ApiException extends RuntimeException {
   private final int status;
   private final String code;

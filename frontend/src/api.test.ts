@@ -1,3 +1,7 @@
+/**
+ * 验证请求层防伪、登录跳转和公开资料归一化，使用模拟请求，不连接外部服务。
+ * 重点检查写操作不会被自动重放，以及未认证用户不能直接进入管理页面。
+ */
 import { beforeEach, afterEach, describe, it, expect, vi } from "vitest";
 import { api, ApiError, resetCsrf } from "./api";
 import { adminDestination } from "./auth";

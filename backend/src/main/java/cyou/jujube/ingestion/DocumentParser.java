@@ -15,6 +15,10 @@ import org.apache.pdfbox.Loader;
 import org.apache.pdfbox.text.PDFTextStripper;
 import org.springframework.stereotype.Component;
 
+/**
+ * 把五种允许的文件格式解析成带原文位置和说话者归属的片段，仅提取文字，不做 OCR。 文件大小、页数、压缩条目、正文长度和片段数量分别设限，降低损坏文件或恶意输入的资源影响。
+ * 解析成功不代表本人掌握内容；人工确认仍在后续资料审阅流程完成。
+ */
 @Component
 public class DocumentParser {
   public record Segment(String id, int ordinal, String label, String speaker, String content) {}
@@ -29,6 +33,7 @@ public class DocumentParser {
     }
   }
 
+  /** 按允许的扩展名选择解析器，统一限制输入大小；没有可提取文字时明确失败，不假装支持扫描件。 */
   public List<Segment> parse(Path path, String format, Mapping mapping) throws Exception {
     if (Files.size(path) > 10 * 1024 * 1024)
       throw ApiException.badRequest("FILE_TOO_LARGE", "文件超过 10MB，请拆分后上传");
@@ -58,6 +63,7 @@ public class DocumentParser {
     return List.copyOf(result);
   }
 
+  /** 支持消息数组、messages 包装和单条对象。有说话者字段时必须明确哪位是本人，他人内容只供审阅。 */
   private void json(Path file, Mapping mapping, List<Segment> out) throws IOException {
     var root = Json.read(Files.readString(file, StandardCharsets.UTF_8));
     var messages = root.isArray() ? root : root.path("messages");
@@ -81,6 +87,7 @@ public class DocumentParser {
     }
   }
 
+  /** 只读取 DOCX 的正文 XML，限制解压后的大小并禁用 DTD 与外部实体，避免扩展解析范围。 */
   private String docx(Path file) throws Exception {
     try (var zip = new ZipInputStream(Files.newInputStream(file))) {
       ZipEntry entry;
@@ -121,6 +128,7 @@ public class DocumentParser {
     throw ApiException.badRequest("INVALID_DOCX", "DOCX 缺少正文结构");
   }
 
+  /** 按最多一千二百字符切分，优先选择段落边界并保留来源位置，控制后续提取和检索输入规模。 */
   private void split(String raw, String label, String speaker, List<Segment> result) {
     if (raw.indexOf('\u0000') >= 0) throw ApiException.badRequest("BINARY_TEXT", "文本包含二进制内容");
     String text = raw.replace("\r\n", "\n").strip();

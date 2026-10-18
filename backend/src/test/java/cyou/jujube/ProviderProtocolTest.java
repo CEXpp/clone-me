@@ -19,7 +19,7 @@ import org.junit.jupiter.api.io.TempDir;
 import org.springframework.boot.context.properties.bind.*;
 import org.springframework.boot.context.properties.source.MapConfigurationPropertySource;
 
-/** Actual provider code against a loopback HTTP fixture, with no external keys or paid requests. */
+/** 使用本机 HTTP 测试服务调用真实供应商适配代码，检查请求结构、用量和失败处理。 不使用外部密钥或付费请求；协议通过不代表真实账户可用或模型回答效果达标。 */
 class ProviderProtocolTest {
   @TempDir Path temp;
   HttpServer server;

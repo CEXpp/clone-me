@@ -1,6 +1,8 @@
+/* 构建时展开 Tailwind；基础规则、通用组件和页面装饰按层组织，便于学习时定位样式来源。 */
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+/* 全站基础交互：键盘焦点必须可见，禁用按钮有明确状态，不依赖鼠标悬停才能操作。 */
 @layer base {
   body {
     @apply m-0 bg-white text-zinc-950 antialiased;
@@ -23,6 +25,7 @@
     @apply bg-zinc-900 text-white;
   }
 }
+/* 可复用的按钮、输入框、面板与提示样式，页面用这些类保持原型的黑白和细边框风格。 */
 @layer components {
   .btn {
     @apply inline-flex items-center justify-center gap-2 px-4 py-2 rounded-full border border-slate-200 bg-white text-xs font-medium text-slate-700 transition-colors hover:border-zinc-900 hover:text-zinc-950;
@@ -61,6 +64,7 @@
     @apply text-base font-semibold tracking-tight;
   }
 }
+/* 网格与输入框阴影均由本地 CSS 绘制，不需要额外图片或远程资源。 */
 .swiss-grid {
   background-size: 48px 48px;
   background-image:
@@ -83,6 +87,7 @@
   border-color: #09090b;
   box-shadow: 0 20px 45px -12px rgba(15, 23, 42, 0.1);
 }
+/* 模型答案作为纯文本展示，保留换行并允许长词折行，不把回答解析为可执行 HTML。 */
 .prose-text {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -99,6 +104,7 @@
 .safe-bottom {
   padding-bottom: max(1rem, env(safe-area-inset-bottom));
 }
+/* 手机顶栏分两行，页面留白需使用相同高度，避免内容被固定导航遮住。 */
 @media (max-width: 639px) {
   .topbar {
     height: 98px;
@@ -121,6 +127,7 @@
     min-height: calc(100dvh - 56px);
   }
 }
+/* 尊重系统减少动态效果的设置，关闭装饰动画和缓动。 */
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

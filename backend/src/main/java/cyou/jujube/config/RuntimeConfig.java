@@ -9,6 +9,7 @@ import org.springframework.context.annotation.Configuration;
 import org.sqlite.SQLiteConfig;
 import org.sqlite.SQLiteDataSource;
 
+/** 提供全局时钟、轻量任务调度器和 SQLite 数据源。 通过注入 Clock 让过期和预算逻辑可在测试中控制时间；后台任务只使用两个调度线程。 */
 @Configuration
 public class RuntimeConfig {
   @Bean
@@ -32,6 +33,7 @@ public class RuntimeConfig {
     return sqlite(props.root().resolve("app.db").toString());
   }
 
+  /** 统一 SQLite 连接规则：启用外键，繁忙时最多等待五秒，使用 WAL 允许读写交错。 */
   public static DataSource sqlite(String file) {
     SQLiteConfig config = new SQLiteConfig();
     config.enforceForeignKeys(true);

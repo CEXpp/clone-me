@@ -12,6 +12,9 @@ import org.springframework.ai.openai.OpenAiChatModel;
 import org.springframework.ai.openai.OpenAiChatOptions;
 import org.springframework.stereotype.Service;
 
+/**
+ * 通过 Spring AI 调用 DeepSeek，负责超时、输出上限、费用预留、结算和脱敏诊断。 客户端按需创建，让未配置模型密钥时应用仍能启动；关闭 SDK 自动重试，避免隐性重复计费。
+ */
 @Service
 public class DeepSeekProvider implements GenerationProvider {
   private final CloneProperties props;
@@ -29,6 +32,7 @@ public class DeepSeekProvider implements GenerationProvider {
     return props.deepseekKey() != null && !props.deepseekKey().isBlank();
   }
 
+  /** 双重检查并延迟创建线程间共享客户端。volatile 确保构造完成后其他线程能看到完整实例。 */
   private ChatClient client() {
     if (client == null)
       synchronized (this) {
@@ -53,6 +57,7 @@ public class DeepSeekProvider implements GenerationProvider {
     return client;
   }
 
+  /** 先检查配置及上下文上限并预留费用，再发起一次模型调用；成功按用量结算，异常保留预留等待对账。 */
   @Override
   public String generate(String requestId, String stage, String system, String user) {
     if (!configured()) throw ApiException.unavailable("GENERATION_NOT_CONFIGURED", "尚未配置生成模型");

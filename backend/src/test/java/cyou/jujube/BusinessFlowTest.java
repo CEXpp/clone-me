@@ -34,6 +34,7 @@ import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 
+/** 通过临时数据库和可控模型替身验证完整业务流程，不调用外部付费服务。 覆盖导入确认发布、证据核验、访客隔离、撤回回退、并发、预算和真实 HTTP 安全边界。 */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @Import(BusinessFlowTest.Fakes.class)
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
@@ -44,7 +45,7 @@ class BusinessFlowTest {
   static void properties(DynamicPropertyRegistry registry) {
     registry.add("clone.data-dir", () -> ROOT.toString());
     registry.add("clone.jobs-enabled", () -> false);
-    // Disposable test-only encryption key; never a production credential.
+    // 仅用于临时测试数据库的加密密钥，不得复制到正式环境。
     registry.add("clone.master-key", () -> Base64.getEncoder().encodeToString(new byte[32]));
   }
 
@@ -358,8 +359,7 @@ class BusinessFlowTest {
                         recoveryCodes.next())))
             .statusCode());
     assertEquals(200, browser.get("/api/admin/sources").statusCode());
-    browser
-        .csrf(); // Spring Security rotates CSRF state when the administrator becomes authenticated.
+    browser.csrf(); // 登录成功后安全框架会轮换防伪状态，下一次写请求必须重新获取令牌。
     assertEquals(200, browser.post("/api/auth/logout", "{}").statusCode());
     assertEquals(401, browser.get("/api/admin/sources").statusCode());
   }

@@ -1,4 +1,8 @@
 <script setup lang="ts">
+/**
+ * 管理台导航与会话状态框架，退出时明确确认并调用服务端撤销接口。
+ * 会话过期由公共请求层触发事件，路由统一返回登录界面。
+ */
 import { useRouter } from "vue-router";
 import { ref } from "vue";
 import Drawer from "../components/Drawer.vue";

@@ -1,4 +1,8 @@
 <script setup lang="ts">
+/**
+ * 真实管理员登录表单，提交密码与动态口令或一次性恢复码。
+ * 登录后刷新防伪状态再进入管理台，不在浏览器保存口令或伪造登录标记。
+ */
 import { ref } from "vue";
 import { useRouter } from "vue-router";
 import { api, refreshCsrf, resetCsrf } from "../api";

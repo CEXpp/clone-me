@@ -17,6 +17,7 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.ResponseCookie;
 import org.springframework.web.bind.annotation.*;
 
+/** 访客接口层，提供公开介绍、风险验证配置、隔离会话和问答。 负责从 Cookie 取会话令牌并转交服务层；续期 Cookie 与数据库过期时间随有效问答同步。 */
 @RestController
 public class PublicController {
   private final VisitorSessions sessions;

@@ -18,6 +18,10 @@ import org.springframework.context.event.EventListener;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
+/**
+ * 通过数据库任务表执行解析、草稿提取和索引发布，无需另行部署消息队列。 每次只领取一个任务，提取和向量构建分批推进；进度持久化，重启后可继续未完成的工作。
+ * 缺配置或预算不足会暂停，需管理员修正后主动重试，避免后台反复产生付费请求。
+ */
 @Component
 public class ImportWorker {
   private final Database db;
@@ -49,6 +53,7 @@ public class ImportWorker {
     this.clock = clock;
   }
 
+  /** 进程重启后把未完成的运行中任务重新排队；已提交的游标和向量保留，避免从头重建。 */
   @EventListener(ApplicationReadyEvent.class)
   public void recover() {
     db.app()
@@ -64,6 +69,7 @@ public class ImportWorker {
     if (enabled) tick();
   }
 
+  /** 原子标志避免调度重入，数据库状态条件更新确保只领取仍在排队的任务，统一记录失败原因。 */
   public void tick() {
     if (!working.compareAndSet(false, true)) return;
     try {
@@ -108,6 +114,7 @@ public class ImportWorker {
     }
   }
 
+  /** 在同一事务保存片段与未确认草稿并完成解析任务；只有本人片段生成候选，模型配置后才入队提取。 */
   private void parse(Map<String, Object> job) throws Exception {
     String jobId = Database.text(job, "id"), sourceId = Database.text(job, "subject_id");
     var source = Database.required(db.app(), "SELECT * FROM sources WHERE id=?", sourceId);
@@ -164,6 +171,7 @@ public class ImportWorker {
             true));
   }
 
+  /** 每批最多处理两个本人片段；只更新仍为未确认参考资料的候选，保护管理员已经编辑过的内容。 */
   private void extract(Map<String, Object> job) {
     String jobId = Database.text(job, "id"), sourceId = Database.text(job, "subject_id");
     int cursor = (int) Database.number(job, "cursor");
@@ -224,6 +232,7 @@ public class ImportWorker {
         Map.of("processedSegments", cursor + segments.size(), "approvalRequired", true));
   }
 
+  /** 每批最多补四个向量并复用指纹缓存；所有向量齐备后一次事务写检索索引并切换版本指针。 */
   private void publish(Map<String, Object> job) {
     String jobId = Database.text(job, "id"), releaseId = Database.text(job, "subject_id");
     var release = Database.required(db.app(), "SELECT * FROM releases WHERE id=?", releaseId);
@@ -272,6 +281,7 @@ public class ImportWorker {
         return;
       }
     }
+    // 发布最后一步必须原子提交：索引、READY 状态与当前版本指针一起生效。
     db.transaction(
         sql -> {
           sql.update(

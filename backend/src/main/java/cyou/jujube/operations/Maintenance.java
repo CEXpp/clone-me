@@ -12,6 +12,7 @@ import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
+/** 执行会话过期、限流记录及诊断记录清理，并重试待发送通知。 邮件是持久化事件的后续处理，失败时记录重试状态，不影响已经完成的问答和费用入账。 */
 @Component
 public class Maintenance {
   private static final Logger LOG = LoggerFactory.getLogger(Maintenance.class);

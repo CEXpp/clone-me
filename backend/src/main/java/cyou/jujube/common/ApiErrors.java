@@ -10,6 +10,7 @@ import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.multipart.MaxUploadSizeExceededException;
 
+/** 统一把控制器异常转换成前端可识别的错误结构，并附上请求编号。 参数错误、文件过大和资源不存在分别响应对应状态；意外错误只记录类型和应用栈位置，避免泄露输入或密钥。 */
 @RestControllerAdvice
 public class ApiErrors {
   private static final Logger LOG = LoggerFactory.getLogger(ApiErrors.class);

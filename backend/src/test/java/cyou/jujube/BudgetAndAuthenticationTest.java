@@ -16,6 +16,7 @@ import org.junit.jupiter.api.io.TempDir;
 import org.springframework.boot.context.properties.bind.*;
 import org.springframework.boot.context.properties.source.MapConfigurationPropertySource;
 
+/** 验证费用预留与人工对账、管理员认证及旧会话数据库兼容。 可控时钟用于检查过期和验证码防重放，所有认证资料只属于本次测试。 */
 class BudgetAndAuthenticationTest {
   @TempDir Path temp;
   CloneProperties props;

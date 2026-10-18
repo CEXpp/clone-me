@@ -11,6 +11,7 @@ import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.csrf.CookieCsrfTokenRepository;
 import org.springframework.security.web.csrf.CsrfTokenRequestAttributeHandler;
 
+/** 集中定义接口授权、无服务端 HTTP 会话的认证方式、Cookie 防伪和内容安全策略。 公开读取和访客聊天允许匿名访问；其余 API 必须具备管理员角色，前端路由不能替代这层授权。 */
 @Configuration
 @org.springframework.boot.autoconfigure.condition.ConditionalOnWebApplication
 public class SecurityConfig {
@@ -29,6 +30,7 @@ public class SecurityConfig {
       CloneProperties props,
       cyou.jujube.common.Diagnostics diagnostics)
       throws Exception {
+    // CSRF Cookie 允许脚本读取以回传请求头；它不是登录凭证，真正的管理员 Cookie 必须 HttpOnly。
     var csrf = new CookieCsrfTokenRepository();
     csrf.setCookieCustomizer(
         cookie -> cookie.httpOnly(false).secure(props.secureCookies()).sameSite("Lax").path("/"));
@@ -79,6 +81,7 @@ public class SecurityConfig {
                                       Map.of(
                                           "code", "ACCESS_DENIED", "message", "请求无权访问或缺少有效防伪令牌")));
                         }))
+        // 在防伪检查前恢复身份并设置请求编号，拒绝请求也能关联到管理审计。
         .addFilterBefore(
             new RequestFilter(auth, diagnostics),
             org.springframework.security.web.csrf.CsrfFilter.class);

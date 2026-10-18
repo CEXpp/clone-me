@@ -14,6 +14,7 @@ import java.time.Duration;
 import java.util.Map;
 import org.springframework.stereotype.Service;
 
+/** 在请求风险升高时验证 Turnstile 令牌，服务端核对结果、主机名和用途。 前端拿到令牌不等于验证通过；密钥只留在后端，访客页面只能获取公开站点标识。 */
 @Service
 public class HumanVerification {
   private final CloneProperties props;
@@ -26,6 +27,7 @@ public class HumanVerification {
     this.limits = limits;
   }
 
+  /** 先评估当前请求频率，达到风险门槛后才要求令牌；最终结果必须由后端向验证服务确认。 */
   public void check(String ipHash, String token) {
     if (props.turnstileKey() == null || props.turnstileKey().isBlank()) return;
     boolean suspicious = false;

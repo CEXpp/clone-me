@@ -16,6 +16,10 @@ import org.springframework.jdbc.datasource.init.ScriptUtils;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.support.TransactionTemplate;
 
+/**
+ * 封装两个 SQLite 数据库及各自的事务边界。 app.db 保存本人资料、索引、认证和费用；sessions.db 单独保存访客会话，便于到期清理及排除备份。
+ * 两个库没有跨库原子事务，调用方应分别完成各自职责，不把跨库操作当作一次提交。
+ */
 @Component
 public class Database {
   private final JdbcTemplate app;
@@ -29,7 +33,7 @@ public class Database {
     initialize(visitorSource, "schema-sessions.sql");
     app = new JdbcTemplate(dataSource);
     sessions = new JdbcTemplate(visitorSource);
-    // Backward-compatible migration for already-created visitor databases.
+    // 兼容旧版本会话库：先检查列是否存在，再补充回复元数据，保留已有聊天记录。
     if (sessions.queryForList("PRAGMA table_info(messages)").stream()
         .noneMatch(column -> "metadata_json".equals(column.get("name"))))
       sessions.execute("ALTER TABLE messages ADD COLUMN metadata_json TEXT NOT NULL DEFAULT '{}'");
@@ -54,10 +58,12 @@ public class Database {
     return sessions;
   }
 
+  /** 在应用库事务内执行工作；异常触发回滚。只放短时数据库操作，不在持锁期间等待模型或邮件。 */
   public <T> T transaction(Function<JdbcTemplate, T> work) {
     return transactions.execute(status -> work.apply(app));
   }
 
+  /** 只操作访客会话库的独立事务，用于成对保存问答和续期。 */
   public <T> T sessionTransaction(Function<JdbcTemplate, T> work) {
     return visitorTransactions.execute(status -> work.apply(sessions));
   }
@@ -68,6 +74,7 @@ public class Database {
     return values.isEmpty() ? fallback : values.getFirst();
   }
 
+  /** 按键更新或插入运行配置，让管理台切换设置无需重启进程。 */
   public void putSetting(String key, String value) {
     app.update(
         "INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",

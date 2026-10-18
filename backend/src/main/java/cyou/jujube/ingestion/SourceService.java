@@ -12,6 +12,10 @@ import java.util.*;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
+/**
+ * 管理资料上传、后台任务入队、候选记录审阅和紧急撤回。 上传文件保存为随机名称，数据库保留展示名及原文关系；文件和数据库提交失败时清理本次孤立文件。
+ * 候选内容只有本人确认且归属、类型、掌握程度合规后才有资格进入新发布版本。
+ */
 @Service
 public class SourceService {
   private final Database db;
@@ -24,6 +28,7 @@ public class SourceService {
     this.clock = clock;
   }
 
+  /** 校验文件和字段映射后以随机名称落盘，再创建资料记录和解析任务；数据库失败时清理本次文件。 */
   public Map<String, Object> upload(MultipartFile file, String mapping) throws IOException {
     String name = file.getOriginalFilename();
     if (name == null || name.length() > 200 || file.isEmpty())
@@ -69,6 +74,7 @@ public class SourceService {
     return Map.of("sourceId", id, "jobId", job, "status", "QUEUED");
   }
 
+  /** 把任务写入数据库队列；被外层应用库事务调用时与业务提交一起成功或回滚。 */
   public String enqueue(String type, String subject) {
     String id = UUID.randomUUID().toString();
     db.app()
@@ -82,6 +88,7 @@ public class SourceService {
     return id;
   }
 
+  /** 只允许失败或暂停的任务重新入队，保留已有游标；不自动重试可能产生费用的操作。 */
   public void retry(String id) {
     int count =
         db.app()
@@ -94,6 +101,7 @@ public class SourceService {
 
   public record CandidateUpdate(String kind, String content, String mastery, boolean approved) {}
 
+  /** 校验记录类型、掌握深度、正文及本人归属，再保存人工审阅结果；批准不等于立即发布。 */
   public void updateCandidate(String id, CandidateUpdate update) {
     if (update.kind() == null
         || update.mastery() == null
@@ -126,6 +134,7 @@ public class SourceService {
             id);
   }
 
+  /** 标记为永久撤回并取消批准，所有版本检索及答案返回前检查都会排除它。 */
   public void withdraw(String id) {
     if (db.app()
             .update(

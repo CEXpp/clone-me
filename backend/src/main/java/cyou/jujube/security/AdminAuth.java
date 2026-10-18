@@ -12,6 +12,10 @@ import java.util.Map;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.stereotype.Service;
 
+/**
+ * 唯一管理员的认证服务：密码哈希、加密保存的动态口令秘密、一次性恢复码和八小时会话。 初始化只能由本地命令触发；动态验证码时间步和恢复码通过条件更新防止并发重放。
+ * 登录接口同时受地址限流保护，数据库只保存会话令牌和恢复码的哈希。
+ */
 @Service
 public class AdminAuth {
   private final Database db;
@@ -29,6 +33,7 @@ public class AdminAuth {
 
   public record Bootstrap(String secret, List<String> recoveryCodes) {}
 
+  /** 只允许创建一次管理员；密码用 BCrypt，动态口令秘密加密，恢复码仅保存哈希。 */
   public synchronized Bootstrap initialize(String username, String password) {
     if (username == null
         || !username.matches("[A-Za-z0-9_-]{3,40}")
@@ -55,6 +60,7 @@ public class AdminAuth {
     return new Bootstrap(secret, List.copyOf(recovery));
   }
 
+  /** 先限流再验证密码和第二因素；验证码时间步或恢复码只能成功消费一次，再签发随机会话。 */
   public synchronized String login(String username, String password, String code, String ipHash) {
     limits.require("login", ipHash, 8, Duration.ofMinutes(15).toMillis());
     var rows = db.app().queryForList("SELECT * FROM admin_account WHERE id=1");
@@ -70,6 +76,7 @@ public class AdminAuth {
               Crypto.decrypt(Database.text(account, "totp_encrypted"), props.masterKey()),
               code,
               clock.millis());
+      // 条件更新既验证时间步递增，也消费本次验证码；并发使用同一码只会成功一次。
       if (step >= 0)
         valid =
             db.app()
@@ -94,6 +101,7 @@ public class AdminAuth {
     return token;
   }
 
+  /** 按令牌哈希及有效期验证会话，不接受前端自行声明的登录标志。 */
   public boolean authenticated(String token) {
     return token != null
         && db.app()

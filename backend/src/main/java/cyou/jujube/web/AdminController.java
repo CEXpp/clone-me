@@ -14,6 +14,7 @@ import java.util.*;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
+/** 受管理员认证保护的业务入口，连接资料审阅、发布、公开展示、费用和运行诊断。 控制器只组织参数和响应；资料边界、预算与状态迁移由对应服务再次校验，不能只依赖前端限制。 */
 @RestController
 @RequestMapping("/api/admin")
 public class AdminController {

@@ -16,7 +16,10 @@ import java.time.Duration;
 import java.util.*;
 import org.springframework.stereotype.Service;
 
-/** Two named adapters share a protocol, but retain provider-specific policies and limits. */
+/**
+ * 适配 TypeSafe Jev 与百炼决策模型，复用协议结构，分别保存模型参数和支持阈值。 每段证据对应一个判断，只有达到当前供应商阈值的资料才继续生成。
+ * 初始阈值没有经过本项目效果评测，概率不是答案准确率；禁用时原样返回基础 RAG 的证据。
+ */
 @Service
 public class SystemOneDecisions implements DecisionProvider {
   private final CloneProperties props;
@@ -53,6 +56,7 @@ public class SystemOneDecisions implements DecisionProvider {
       double supportThreshold,
       int maxQuestions) {}
 
+  /** 供应商策略分别配置，切换时不继承另一模型的概率阈值或批量上限。 */
   private Adapter adapter(String selected) {
     return switch (selected) {
       case "typesafe" ->
@@ -77,6 +81,7 @@ public class SystemOneDecisions implements DecisionProvider {
     };
   }
 
+  /** 给每段候选资料分配判断键，校验返回概率并按阈值筛选；异常上抛，由 ChatService 决定回退。 */
   @Override
   public Judgment evaluate(String requestId, String question, List<Evidence> evidence) {
     String selected = selected();
@@ -188,6 +193,7 @@ public class SystemOneDecisions implements DecisionProvider {
     }
   }
 
+  /** 只返回可公开给管理台的配置状态和阈值，不把密钥或完整配置对象序列化。 */
   public Map<String, Object> configuration() {
     return Map.of(
         "provider",

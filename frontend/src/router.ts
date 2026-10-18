@@ -1,3 +1,7 @@
+/**
+ * 使用哈希路由，静态资源由后端提供时无需额外的页面路径回退。
+ * 进入管理页先向服务器核实登录状态；服务器的接口鉴权才是最终访问边界。
+ */
 import { createRouter, createWebHashHistory } from "vue-router";
 import { ref } from "vue";
 import { api, ApiError } from "./api";

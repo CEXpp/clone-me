@@ -14,6 +14,7 @@ import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.filter.OncePerRequestFilter;
 
+/** 为请求分配追踪编号，恢复管理员身份，并记录管理写操作的脱敏审计。 必须先于 CSRF 过滤器执行，才能关联被安全层拒绝的请求；结束时清理线程诊断上下文。 */
 public class RequestFilter extends OncePerRequestFilter {
   private final AdminAuth auth;
   private final cyou.jujube.common.Diagnostics diagnostics;
@@ -74,10 +75,7 @@ public class RequestFilter extends OncePerRequestFilter {
     return null;
   }
 
-  /**
-   * Deliberately ignores caller-controlled forwarding headers; trusted-proxy support is explicit
-   * deployment configuration.
-   */
+  /** 只使用连接对端地址计算限流标识，忽略访客可伪造的转发头。 部署 Nginx 后，需要明确配置可信代理和真实客户端地址，不能直接信任任意请求头。 */
   public static String ipHash(HttpServletRequest request) {
     return Crypto.hash(request.getRemoteAddr());
   }

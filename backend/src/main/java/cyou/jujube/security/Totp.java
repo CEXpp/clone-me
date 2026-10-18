@@ -5,6 +5,7 @@ import java.security.SecureRandom;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 
+/** 实现基于时间的六位动态口令，使用 HMAC-SHA1 和三十秒时间步。 匹配允许相邻时间步的时钟偏差；本类只计算，是否已经用过由 AdminAuth 在数据库中判断。 */
 public final class Totp {
   private static final String ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
 
@@ -55,6 +56,7 @@ public final class Totp {
     }
   }
 
+  /** 尝试当前及相邻时间步，返回匹配的步号供数据库防重放使用；不匹配返回负数。 */
   public static long matchingStep(String secret, String input, long epochMillis) {
     if (input == null || !input.matches("\\d{6}")) return -1;
     long step = epochMillis / 30_000;

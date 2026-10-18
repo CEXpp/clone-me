@@ -1,4 +1,8 @@
 <script setup lang="ts">
+/**
+ * 全站框架，提供公开导航、管理入口和操作提示；具体聊天与管理业务由子路由承载。
+ * 从公开页面切换到管理台必须经过路由的服务端身份检查。
+ */
 import { onMounted, onBeforeUnmount, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { api } from "./api";
@@ -26,7 +30,7 @@ onMounted(async () => {
   try {
     profile.value = normalizeProfile(await api("/api/public/profile"));
   } catch {
-    /* Public page offers a visible retry. */
+    /* 资料加载失败由访客页面展示错误和重试入口，顶栏保持可用。 */
   }
 });
 onBeforeUnmount(() => {

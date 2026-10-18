@@ -1,3 +1,7 @@
+/**
+ * 页面共享状态和交互工具：公开资料、提示、互斥提交、未保存提醒和数据展示。
+ * 公开资料先归一化再渲染，外链校验协议；后端仍需独立校验，前端检查只改善操作体验。
+ */
 import { onBeforeUnmount, onMounted, ref } from "vue";
 import { onBeforeRouteLeave } from "vue-router";
 import { ApiError } from "./api";
@@ -16,6 +20,7 @@ export function errorText(error: unknown) {
       ? error.message
       : "操作失败，请稍后重试";
 }
+/** 把按钮忙碌态、异常提示和 finally 复位统一封装，防止用户连点导致重复提交。 */
 export function useAction() {
   const busy = ref(false),
     error = ref("");
@@ -33,6 +38,7 @@ export function useAction() {
   }
   return { busy, error, run };
 }
+/** 同时处理路由离开和浏览器关闭；认证过期及确认退出时允许跳转，避免困在无效管理页。 */
 export function useUnsaved(isDirty: () => boolean) {
   onBeforeRouteLeave(
     () =>
@@ -69,6 +75,7 @@ export function date(n: unknown) {
     ? new Date(Number(n)).toLocaleString("zh-CN", { hour12: false })
     : "—";
 }
+/** 只允许明确的网页或邮件协议，防止把可执行脚本地址绑定到链接。 */
 export function safeUrl(value: unknown) {
   if (typeof value !== "string") return undefined;
   try {
@@ -120,6 +127,7 @@ export const profile = ref<Profile>({
   filings: [],
   quickQuestions: [],
 });
+/** 对每层字段检查类型并提供空值，兼容未配置资料与旧数据，绝不填入虚构履历。 */
 export function normalizeProfile(raw: any): Profile {
   const text = (v: unknown) => (typeof v === "string" ? v : "");
   const rows = (v: unknown) =>

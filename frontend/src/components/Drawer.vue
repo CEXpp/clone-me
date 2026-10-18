@@ -1,4 +1,8 @@
 <script setup lang="ts">
+/**
+ * 通用抽屉与确认弹窗，包含键盘焦点循环、Escape 关闭、背景禁用和关闭后焦点恢复。
+ * 使用 Teleport 挂到 body，打开时根应用 inert，避免键盘访问遮罩后的内容。
+ */
 import { nextTick, onBeforeUnmount, ref, watch, useId } from "vue";
 const props = defineProps<{
   open: boolean;
@@ -11,6 +15,7 @@ const panel = ref<HTMLElement>();
 const titleId = useId();
 let previous: HTMLElement | null = null,
   previousOverflow = "";
+/** 把 Tab 焦点限制在当前弹窗中，同时支持 Shift+Tab 反向循环及 Escape 关闭。 */
 function keyboard(event: KeyboardEvent) {
   if (!props.open) return;
   if (event.key === "Escape") {
@@ -40,6 +45,7 @@ function keyboard(event: KeyboardEvent) {
     }
   }
 }
+/** 解除背景禁用、滚动锁和键盘监听，并把焦点还给打开弹窗前的元素。 */
 function unlock() {
   document.body.style.overflow = previousOverflow;
   const app = document.getElementById("app");

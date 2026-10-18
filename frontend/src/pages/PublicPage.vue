@@ -1,4 +1,8 @@
 <script setup lang="ts">
+/**
+ * 访客页面负责公开资料抽屉、同浏览器续聊、提问和当前会话清除。
+ * 令牌由 HttpOnly Cookie 自动携带，不写入本地存储；只有后端完成核验的完整答案才显示为回复。
+ */
 import { computed, nextTick, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { api, ApiError } from "../api";
@@ -62,6 +66,7 @@ async function refreshProfile() {
     profileError.value = errorText(e);
   }
 }
+/** 只恢复当前浏览器 Cookie 对应会话；401 表示无有效会话，网络故障则保留可重试提示。 */
 async function recover() {
   recovering.value = true;
   error.value = "";
@@ -94,6 +99,7 @@ async function scroll() {
       : "smooth",
   });
 }
+/** 一次只提交一个问题；失败保留输入，等待用户决定是否重试，不自动重发可能已计费的问答。 */
 async function send() {
   const question = input.value.trim();
   if (!question || question.length > 2000 || busy.value || checking.value)
@@ -169,6 +175,7 @@ async function copy(value: string) {
     notify("复制不可用，请手动选择文本复制");
   }
 }
+/** 中文输入法确认候选词时也会触发 Enter，必须排除组合输入，避免误发送。 */
 function keydown(event: KeyboardEvent) {
   if (
     event.key === "Enter" &&

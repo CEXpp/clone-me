@@ -12,7 +12,10 @@ import java.util.Map;
 import java.util.UUID;
 import org.springframework.stereotype.Service;
 
-/** All amounts are integer micro-CNY. Never perform remote calls inside this transaction. */
+/**
+ * 模型费用账本，所有金额使用整数微元，即一元等于一百万微元，避免浮点金额误差。 按北京时间自然日原子预留预算；网络请求放在事务外，结束后结算或保留不确定费用等待对账。
+ * 累计费用通知通过唯一事件编号去重，邮件失败不会回滚已完成的费用结算。
+ */
 @Service
 public class BudgetService {
   private final Database db;
@@ -33,6 +36,7 @@ public class BudgetService {
         .longValueExact();
   }
 
+  /** 单价按每百万词元的人民币金额传入，相乘后得到微元；向上取整，避免低估费用。 */
   public static long estimate(
       BigDecimal inputPrice, BigDecimal outputPrice, long input, long output) {
     if (inputPrice == null
@@ -47,6 +51,7 @@ public class BudgetService {
         .longValueExact();
   }
 
+  /** 通过带预算条件的 UPDATE 原子增加预留额，再写调用记录；事务期间不执行远程请求。 */
   public synchronized Reservation reserve(
       String requestId, String stage, String provider, String model, long maximum) {
     if (maximum < 0) throw new IllegalArgumentException("Negative reservation");
@@ -97,6 +102,7 @@ public class BudgetService {
     return result;
   }
 
+  /** 只结算仍为预留状态的调用，扣回预留并累加实际估算额；重复结算直接跳过。 */
   public synchronized void settle(
       Reservation reservation, long actual, long input, long output, long duration) {
     if (actual < 0 || input < 0 || output < 0 || duration < 0)
@@ -131,6 +137,7 @@ public class BudgetService {
         });
   }
 
+  /** 超时或异常时不能断言供应商未收费，标为待对账并继续占用预留额度。 */
   public void uncertain(Reservation reservation, String code, long duration) {
     db.app()
         .update(
@@ -140,6 +147,7 @@ public class BudgetService {
             reservation.id());
   }
 
+  /** 管理员核对账单后把不确定记录恢复为可结算状态，在同一事务内完成实际费用入账。 */
   public synchronized void reconcile(String id, BigDecimal actualCny) {
     if (actualCny == null
         || actualCny.signum() < 0

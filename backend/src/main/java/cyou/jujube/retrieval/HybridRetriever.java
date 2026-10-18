@@ -12,6 +12,10 @@ import org.springframework.ai.rag.Query;
 import org.springframework.ai.rag.retrieval.search.DocumentRetriever;
 import org.springframework.stereotype.Service;
 
+/**
+ * 实现 Spring AI 检索接口，把中文关键词结果和独立向量召回按排名融合。 两条召回路径各取前 24 项，使用倒数排名融合选出最多 8 项；不直接相加不可比的原始分数。
+ * 向量故障或指纹不符时保留关键词路径，并记录原因；所有路径均排除表达样例和已撤回记录。
+ */
 @Service
 public class HybridRetriever implements DocumentRetriever {
   public record Passage(
@@ -48,6 +52,7 @@ public class HybridRetriever implements DocumentRetriever {
     this.diagnostics = diagnostics;
   }
 
+  /** 把本站检索结果转换成 Spring AI 的文档结构，保留记录及来源编号供上层追踪。 */
   @Override
   public List<Document> retrieve(Query query) {
     return search(
@@ -65,12 +70,14 @@ public class HybridRetriever implements DocumentRetriever {
         .toList();
   }
 
+  /** 固定版本检索，分别排名后融合；向量分支失败只降级召回方式，不放宽事实核验。 */
   public Retrieved search(String requestId, String version, String question) {
     long started = System.nanoTime();
     if (version.isBlank()) return new Retrieved(version, List.of(), false, "NO_RELEASE");
     var release =
         Database.required(
             db.app(), "SELECT * FROM releases WHERE id=? AND status='READY'", version);
+    // 融合的是排名：不同检索器的原始分数不在同一尺度，不能直接相加。
     var ranks = new LinkedHashMap<Long, Double>();
     var rowsById = new HashMap<Long, Map<String, Object>>();
     String query = TextIndex.query(question);
@@ -94,6 +101,7 @@ public class HybridRetriever implements DocumentRetriever {
       try {
         if (!embedding.fingerprint().equals(release.get("fingerprint")))
           throw ApiException.unavailable("EMBEDDING_FINGERPRINT_CHANGED", "索引模型与查询模型不匹配");
+        // 查询缓存最多一百二十八项、五分钟有效，键包含模型指纹，避免跨配置复用。
         String cacheKey = Crypto.hash(embedding.fingerprint() + "\n" + question);
         var cached = queryCache.get(cacheKey);
         float[] vector;
@@ -110,6 +118,7 @@ public class HybridRetriever implements DocumentRetriever {
         for (var row : all) {
           double similarity =
               TextIndex.similarity(vector, TextIndex.decode((byte[]) row.get("embedding")));
+          // 独立向量召回先设相关度下限；该值是待真实资料评测校准的工程初值。
           if (similarity >= 0.30) scored.add(Map.entry(row, similarity));
         }
         scored.sort(Map.Entry.<Map<String, Object>, Double>comparingByValue().reversed());

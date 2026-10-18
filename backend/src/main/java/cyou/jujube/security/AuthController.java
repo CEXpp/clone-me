@@ -10,6 +10,7 @@ import org.springframework.http.ResponseCookie;
 import org.springframework.security.web.csrf.CsrfToken;
 import org.springframework.web.bind.annotation.*;
 
+/** 提供防伪令牌、管理员登录、身份检查和退出接口。 认证令牌放入 HttpOnly Cookie，前端脚本不能读取；前端可读取的 CSRF 令牌用于防止跨站伪造写请求。 */
 @RestController
 @RequestMapping("/api/auth")
 public class AuthController {

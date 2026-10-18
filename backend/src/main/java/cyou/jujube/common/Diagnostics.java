@@ -7,6 +7,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
+/** 把阶段诊断同时写入数据库和日志，后台可按请求编号还原处理路径。 调用方只传耗时、来源编号、供应商、错误码等诊断信息，不传聊天全文、口令或密钥。 */
 @Service
 public class Diagnostics {
   private static final Logger LOG = LoggerFactory.getLogger(Diagnostics.class);
@@ -18,6 +19,7 @@ public class Diagnostics {
     this.clock = clock;
   }
 
+  /** 保存可检索阶段事件，并临时关联日志请求编号；结束后恢复原有上下文，避免后台任务串号。 */
   public void event(String requestId, String stage, String event, Map<String, ?> details) {
     String detail = Json.write(details);
     db.app()

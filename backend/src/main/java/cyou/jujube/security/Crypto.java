@@ -11,6 +11,7 @@ import javax.crypto.Cipher;
 import javax.crypto.spec.GCMParameterSpec;
 import javax.crypto.spec.SecretKeySpec;
 
+/** 封装随机令牌、SHA-256 哈希以及 AES-GCM 认证加密。 令牌和恢复码用哈希验证即可；TOTP 秘密需要恢复原文计算验证码，所以必须使用主密钥加密保存。 */
 public final class Crypto {
   private static final SecureRandom RANDOM = new SecureRandom();
 
@@ -34,6 +35,7 @@ public final class Crypto {
     }
   }
 
+  /** 每次生成新的随机初始化向量，使用认证加密保护 TOTP 秘密；相同明文也不应生成相同密文。 */
   public static String encrypt(String value, String master) {
     try {
       byte[] nonce = new byte[12];
@@ -54,6 +56,7 @@ public final class Crypto {
     }
   }
 
+  /** 验证认证标签后再返回明文；主密钥错误或密文被篡改必须失败，不能继续使用不可信数据。 */
   public static String decrypt(String value, String master) {
     try {
       ByteBuffer bytes = ByteBuffer.wrap(Base64.getDecoder().decode(value));
