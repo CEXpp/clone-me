@@ -336,6 +336,9 @@ class BusinessFlowTest {
   @Test
   void httpRequiresAuthenticationAndCsrfAndAllowsValidatedAdmin() throws Exception {
     var browser = new Browser();
+    var missing = browser.get("/not-present.fixture");
+    assertEquals(404, missing.statusCode());
+    assertEquals("RESOURCE_NOT_FOUND", Json.read(missing.body()).path("code").asText());
     assertEquals(401, browser.get("/api/admin/sources").statusCode());
     assertEquals(403, browser.postWithoutCsrf("/api/public/session", "{}").statusCode());
     browser.csrf();

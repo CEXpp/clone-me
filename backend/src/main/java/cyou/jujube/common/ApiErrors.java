@@ -34,6 +34,11 @@ public class ApiErrors {
     return error(413, "FILE_TOO_LARGE", "文件超过上传大小限制");
   }
 
+  @ExceptionHandler(org.springframework.web.servlet.resource.NoResourceFoundException.class)
+  ResponseEntity<?> notFound(Exception ex) {
+    return error(404, "RESOURCE_NOT_FOUND", "请求的资源不存在");
+  }
+
   @ExceptionHandler(Exception.class)
   ResponseEntity<?> unexpected(Exception ex) {
     var frames =
