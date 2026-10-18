@@ -36,11 +36,12 @@ try {
         if ($Action -eq 'FrontendDev') { return }
     }
     Set-Location -LiteralPath (Join-Path $taskRoot 'backend')
-    # 使用项目缓存和明确的 HTTPS 仓库，不覆盖开发机原有 Maven 全局设置。
+    # 直接调用 Maven，沿用开发者已有的 settings、镜像与本地仓库，不在项目中覆盖机器配置。
+    # 格式化工具独立放在 format 配置集中，普通编译和启动不需要解析它。
     switch ($Action) {
-        'Test' { & mvn -s .mvn/settings.xml '-Dmaven.repo.local=../.cache/maven' -B -ntp test }
-        'Build' { & mvn -s .mvn/settings.xml '-Dmaven.repo.local=../.cache/maven' -B -ntp clean package }
-        'Format' { & mvn -s .mvn/settings.xml '-Dmaven.repo.local=../.cache/maven' -B -ntp fmt:format }
+        'Test' { & mvn -B -ntp test }
+        'Build' { & mvn -B -ntp clean package }
+        'Format' { & mvn -B -ntp -Pformat fmt:format }
         default {
             $taskJar = Join-Path (Get-Location) 'target/clone-me-0.1.0-SNAPSHOT.jar'
             if (-not (Test-Path -LiteralPath $taskJar)) { throw 'Run scripts/dev.ps1 Build first.' }
