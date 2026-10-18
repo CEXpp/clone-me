@@ -48,10 +48,17 @@ public class VisitorSessions {
 
   public List<Map<String, Object>> history(String token) {
     var session = require(token);
-    return db.sessions()
-        .queryForList(
-            "SELECT role,content,created_at FROM (SELECT sequence,role,content,created_at FROM messages WHERE session_id=? ORDER BY sequence DESC LIMIT 100) ORDER BY sequence",
-            session.get("id"));
+    var rows =
+        db.sessions()
+            .queryForList(
+                "SELECT role,content,created_at,metadata_json FROM (SELECT sequence,role,content,created_at,metadata_json FROM messages WHERE session_id=? ORDER BY sequence DESC LIMIT 100) ORDER BY sequence",
+                session.get("id"));
+    for (var row : rows) {
+      var metadata = cyou.jujube.common.Json.map((String) row.remove("metadata_json"));
+      for (String key : List.of("status", "sources", "requestId"))
+        if (metadata.containsKey(key)) row.put(key, metadata.get(key));
+    }
+    return rows;
   }
 
   public List<Map<String, Object>> context(String id) {
@@ -86,6 +93,10 @@ public class VisitorSessions {
   }
 
   public void save(String id, String question, String answer) {
+    save(id, question, answer, Map.of());
+  }
+
+  public void save(String id, String question, String answer, Map<String, ?> metadata) {
     long now = clock.millis();
     db.sessionTransaction(
         sql -> {
@@ -102,11 +113,12 @@ public class VisitorSessions {
               question,
               now);
           sql.update(
-              "INSERT INTO messages(id,session_id,role,content,created_at) VALUES(?,?,'assistant',?,?)",
+              "INSERT INTO messages(id,session_id,role,content,created_at,metadata_json) VALUES(?,?,'assistant',?,?,?)",
               UUID.randomUUID().toString(),
               id,
               answer,
-              now);
+              now,
+              cyou.jujube.common.Json.write(metadata));
           sql.update("UPDATE visitor_sessions SET expires_at=? WHERE id=?", now + LIFE, id);
           return null;
         });

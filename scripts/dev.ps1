@@ -1,6 +1,6 @@
 param(
     [Parameter(Position = 0)]
-    [ValidateSet('Test', 'Build', 'Run', 'InitAdmin', 'MasterKey', 'Format')]
+    [ValidateSet('Test', 'Build', 'Run', 'InitAdmin', 'MasterKey', 'Format', 'FrontendDev')]
     [string]$Action = 'Test',
     [string]$EnvFile
 )
@@ -20,10 +20,21 @@ if (Test-Path -LiteralPath $EnvFile) {
 }
 $taskPrevious = Get-Location
 try {
+    if ($Action -in @('Test', 'Build', 'FrontendDev')) {
+        Set-Location -LiteralPath (Join-Path $taskRoot 'frontend')
+        if (-not (Test-Path -LiteralPath 'node_modules')) { & npm ci --no-audit --no-fund; if ($LASTEXITCODE -ne 0) { throw 'Frontend dependency installation failed.' } }
+        switch ($Action) {
+            'Test' { & npm test }
+            'Build' { & npm run build }
+            'FrontendDev' { & npm run dev }
+        }
+        if ($LASTEXITCODE -ne 0) { throw 'Frontend command failed.' }
+        if ($Action -eq 'FrontendDev') { return }
+    }
     Set-Location -LiteralPath (Join-Path $taskRoot 'backend')
     switch ($Action) {
         'Test' { & mvn -s .mvn/settings.xml '-Dmaven.repo.local=../.cache/maven' -B -ntp test }
-        'Build' { & mvn -s .mvn/settings.xml '-Dmaven.repo.local=../.cache/maven' -B -ntp package }
+        'Build' { & mvn -s .mvn/settings.xml '-Dmaven.repo.local=../.cache/maven' -B -ntp clean package }
         'Format' { & mvn -s .mvn/settings.xml '-Dmaven.repo.local=../.cache/maven' -B -ntp fmt:format }
         default {
             $taskJar = Join-Path (Get-Location) 'target/clone-me-0.1.0-SNAPSHOT.jar'

@@ -148,6 +148,7 @@ public class AdminController {
             "projects",
             "experiences",
             "contacts",
+            "filings",
             "quickQuestions")
         .containsAll(value.keySet()))
       throw ApiException.badRequest("INVALID_PROFILE", "个人展示字段不受支持");

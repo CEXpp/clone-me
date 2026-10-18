@@ -134,6 +134,9 @@ class BusinessFlowTest {
     assertEquals(record, answer.sources().getFirst().id());
     assertEquals(1, generation.checks.get());
     assertEquals(2, sessions.history(alice.token()).size());
+    assertEquals("ANSWERED", sessions.history(alice.token()).getLast().get("status"));
+    assertEquals("test-flow", sessions.history(alice.token()).getLast().get("requestId"));
+    assertFalse(((List<?>) sessions.history(alice.token()).getLast().get("sources")).isEmpty());
     assertTrue(sessions.history(bob.token()).isEmpty());
     assertThrows(ApiException.class, () -> sessions.require("unrelated-token"));
     assertEquals(

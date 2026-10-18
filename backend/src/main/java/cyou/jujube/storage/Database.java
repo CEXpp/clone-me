@@ -29,6 +29,10 @@ public class Database {
     initialize(visitorSource, "schema-sessions.sql");
     app = new JdbcTemplate(dataSource);
     sessions = new JdbcTemplate(visitorSource);
+    // Backward-compatible migration for already-created visitor databases.
+    if (sessions.queryForList("PRAGMA table_info(messages)").stream()
+        .noneMatch(column -> "metadata_json".equals(column.get("name"))))
+      sessions.execute("ALTER TABLE messages ADD COLUMN metadata_json TEXT NOT NULL DEFAULT '{}'");
     transactions = new TransactionTemplate(new DataSourceTransactionManager(dataSource));
     visitorTransactions = new TransactionTemplate(new DataSourceTransactionManager(visitorSource));
   }

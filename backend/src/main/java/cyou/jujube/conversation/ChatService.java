@@ -196,7 +196,11 @@ public class ChatService {
       String status,
       List<Source> sources,
       long started) {
-    sessions.save(sessionId, question, answer);
+    sessions.save(
+        sessionId,
+        question,
+        answer,
+        Map.of("requestId", requestId, "status", status, "sources", sources));
     long expires =
         db.sessions()
             .queryForObject(

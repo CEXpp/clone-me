@@ -43,6 +43,19 @@ class BudgetAndAuthenticationTest {
   }
 
   @Test
+  void legacyConversationSchemaIsUpgradedWithoutLosingMessages() throws Exception {
+    var visitors = new cyou.jujube.conversation.VisitorSessions(db, clock);
+    var visitor = visitors.create();
+    visitors.save(visitor.id(), "fixture question", "fixture answer");
+    db.sessions().execute("ALTER TABLE messages DROP COLUMN metadata_json");
+    var upgraded = new Database(RuntimeConfig.sqlite(temp.resolve("app.db").toString()), props);
+    var restored = new cyou.jujube.conversation.VisitorSessions(upgraded, clock);
+    assertEquals("fixture answer", restored.history(visitor.token()).getLast().get("content"));
+    assertDoesNotThrow(
+        () -> new Database(RuntimeConfig.sqlite(temp.resolve("app.db").toString()), props));
+  }
+
+  @Test
   void paidSwitchBlocksNewPaidCallsButKeepsFreeEmbeddingAvailable() {
     db.putSetting("ai.paid-enabled", "false");
     var budget = new BudgetService(db, clock, props);
