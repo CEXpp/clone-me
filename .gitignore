@@ -1,0 +1,35 @@
+# Secrets and private runtime data
+.env
+.env.*
+!.env.example
+application-local.yml
+application-local.yaml
+application-secrets.*
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.db
+*.db-*
+*.sqlite*
+data/
+runtime/
+uploads/
+backups/
+logs/
+*.log
+.cache/
+
+# Build and IDE output
+target/
+**/target/
+node_modules/
+dist/
+.idea/
+.vscode/
+*.iml
+.DS_Store
+
+# Test-local configuration
+*.local
