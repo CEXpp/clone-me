@@ -123,15 +123,17 @@ public class SourceService {
             || "REFERENCE".equals(update.kind())
             || "UNCONFIRMED".equals(update.mastery())))
       throw ApiException.badRequest("CONFIRMATION_REQUIRED", "只能批准本人归属明确、类型与掌握范围已确认的记录");
-    db.app()
-        .update(
-            "UPDATE candidates SET kind=?,content=?,mastery=?,approved=?,updated_at=? WHERE id=?",
-            update.kind(),
-            update.content(),
-            update.mastery(),
-            update.approved() ? 1 : 0,
-            clock.millis(),
-            id);
+    // 条件写入把撤回校验与保存合并，防止校验之后发生撤回仍重新批准记录。
+    if (db.app()
+            .update(
+                "UPDATE candidates SET kind=?,content=?,mastery=?,approved=?,manually_edited=1,updated_at=? WHERE id=? AND withdrawn=0",
+                update.kind(),
+                update.content(),
+                update.mastery(),
+                update.approved() ? 1 : 0,
+                clock.millis(),
+                id)
+        != 1) throw new ApiException(409, "CANDIDATE_WITHDRAWN", "该记录已永久撤回，不能再编辑或确认，请刷新资料");
   }
 
   /** 标记为永久撤回并取消批准，所有版本检索及答案返回前检查都会排除它。 */

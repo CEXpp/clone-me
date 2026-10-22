@@ -29,6 +29,11 @@
     </resources>
     <plugins>
       <plugin><groupId>org.springframework.boot</groupId><artifactId>spring-boot-maven-plugin</artifactId></plugin>
+      <!-- 测试临时文件归属构建目录，避免系统临时目录权限和清理策略影响可重复验证。 -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId><artifactId>maven-surefire-plugin</artifactId>
+        <configuration><argLine>-Djava.io.tmpdir="${project.build.directory}"</argLine></configuration>
+      </plugin>
     </plugins>
   </build>
   <profiles>

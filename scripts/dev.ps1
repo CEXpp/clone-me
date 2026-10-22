@@ -2,7 +2,7 @@
 # 脚本只修改当前进程环境，不写机器全局配置；退出后恢复原工作目录。
 param(
     [Parameter(Position = 0)]
-    [ValidateSet('Test', 'Build', 'Run', 'InitAdmin', 'MasterKey', 'Format', 'FrontendDev')]
+    [ValidateSet('Check', 'Test', 'Build', 'Run', 'InitAdmin', 'MasterKey', 'Format', 'FrontendDev')]
     [string]$Action = 'Test',
     [string]$EnvFile
 )
@@ -24,12 +24,18 @@ if (Test-Path -LiteralPath $EnvFile) {
 $taskPrevious = Get-Location
 try {
     # 前端先构建到 dist，随后 Maven 把静态文件一起打入可执行 JAR。
-    if ($Action -in @('Test', 'Build', 'FrontendDev')) {
+    if ($Action -in @('Check', 'Test', 'Build', 'Format', 'FrontendDev')) {
         Set-Location -LiteralPath (Join-Path $taskRoot 'frontend')
         if (-not (Test-Path -LiteralPath 'node_modules')) { & npm ci --no-audit --no-fund; if ($LASTEXITCODE -ne 0) { throw 'Frontend dependency installation failed.' } }
         switch ($Action) {
+            'Check' {
+                & npm run check
+                if ($LASTEXITCODE -ne 0) { throw 'Frontend checks failed.' }
+                & npm run build
+            }
             'Test' { & npm test }
             'Build' { & npm run build }
+            'Format' { & npm run format }
             'FrontendDev' { & npm run dev }
         }
         if ($LASTEXITCODE -ne 0) { throw 'Frontend command failed.' }
@@ -39,6 +45,11 @@ try {
     # 直接调用 Maven，沿用开发者已有的 settings、镜像与本地仓库，不在项目中覆盖机器配置。
     # 格式化工具独立放在 format 配置集中，普通编译和启动不需要解析它。
     switch ($Action) {
+        'Check' {
+            & mvn -B -ntp -Pformat fmt:check
+            if ($LASTEXITCODE -ne 0) { throw 'Backend format check failed.' }
+            & mvn -B -ntp verify
+        }
         'Test' { & mvn -B -ntp test }
         'Build' { & mvn -B -ntp clean package }
         'Format' { & mvn -B -ntp -Pformat fmt:format }

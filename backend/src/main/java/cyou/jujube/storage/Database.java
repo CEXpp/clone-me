@@ -39,6 +39,17 @@ public class Database {
       sessions.execute("ALTER TABLE messages ADD COLUMN metadata_json TEXT NOT NULL DEFAULT '{}'");
     transactions = new TransactionTemplate(new DataSourceTransactionManager(dataSource));
     visitorTransactions = new TransactionTemplate(new DataSourceTransactionManager(visitorSource));
+    // 旧记录无法可靠区分人工草稿和机器草稿，升级时保守保护全部旧候选；迁移可重复执行。
+    transaction(
+        sql -> {
+          if (sql.queryForList("PRAGMA table_info(candidates)").stream()
+              .noneMatch(column -> "manually_edited".equals(column.get("name")))) {
+            sql.execute(
+                "ALTER TABLE candidates ADD COLUMN manually_edited INTEGER NOT NULL DEFAULT 0");
+            sql.update("UPDATE candidates SET manually_edited=1");
+          }
+          return null;
+        });
   }
 
   private void initialize(DataSource source, String schema) throws Exception {

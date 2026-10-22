@@ -4,8 +4,9 @@ CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS sources (id TEXT PRIMARY KEY, name TEXT NOT NULL, file_name TEXT NOT NULL, hash TEXT NOT NULL, format TEXT NOT NULL, mapping_json TEXT NOT NULL DEFAULT '{}', status TEXT NOT NULL, created_at INTEGER NOT NULL, error_code TEXT);
 -- 带来源位置的原文片段；speaker 区分本人和他人，供人工审阅及归属检查。
 CREATE TABLE IF NOT EXISTS segments (id TEXT PRIMARY KEY, source_id TEXT NOT NULL REFERENCES sources(id), ordinal INTEGER NOT NULL, label TEXT NOT NULL, speaker TEXT NOT NULL, content TEXT NOT NULL);
--- 待确认候选；approved、mastery、kind 与 withdrawn 共同决定能否进入发布快照。
-CREATE TABLE IF NOT EXISTS candidates (id TEXT PRIMARY KEY, source_id TEXT NOT NULL REFERENCES sources(id), segment_id TEXT NOT NULL REFERENCES segments(id), kind TEXT NOT NULL DEFAULT 'REFERENCE', content TEXT NOT NULL, mastery TEXT NOT NULL DEFAULT 'UNCONFIRMED', approved INTEGER NOT NULL DEFAULT 0, withdrawn INTEGER NOT NULL DEFAULT 0, updated_at INTEGER NOT NULL);
+-- 待确认候选；manually_edited 保护人工草稿，后台提取不能覆盖本人已经保存的内容。
+CREATE TABLE IF NOT EXISTS candidates (id TEXT PRIMARY KEY, source_id TEXT NOT NULL REFERENCES sources(id), segment_id TEXT NOT NULL REFERENCES segments(id), kind TEXT NOT NULL DEFAULT 'REFERENCE', content TEXT NOT NULL, mastery TEXT NOT NULL DEFAULT 'UNCONFIRMED', approved INTEGER NOT NULL DEFAULT 0, withdrawn INTEGER NOT NULL DEFAULT 0, manually_edited INTEGER NOT NULL DEFAULT 0, updated_at INTEGER NOT NULL);
+CREATE INDEX IF NOT EXISTS idx_candidates_segment ON candidates(segment_id);
 -- 持久化后台队列；type 是任务种类，status 是生命周期，stage 是当前步骤，cursor 保存分批进度。
 CREATE TABLE IF NOT EXISTS jobs (id TEXT PRIMARY KEY, type TEXT NOT NULL, subject_id TEXT NOT NULL, status TEXT NOT NULL, stage TEXT NOT NULL, error_code TEXT, cursor INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
 -- 知识版本元数据；先 BUILDING，索引完成后 READY，失败不会切换当前生效版本。
