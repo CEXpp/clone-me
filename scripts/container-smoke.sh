@@ -20,9 +20,13 @@ mkdir -p "$task_temp/data" "$task_temp/certs/live/clone.test"
 chmod 755 "$task_temp"
 sudo chown 10001:10001 "$task_temp/data"
 task_master="$(python3 -c 'import secrets,base64; print(base64.b64encode(secrets.token_bytes(32)).decode())')"
-docker run --rm --network none --read-only --tmpfs /tmp:mode=1777,size=64m --mount "type=bind,source=$task_temp/data,target=/data" \
+if ! docker run --rm --network none --read-only --tmpfs /tmp:mode=1777,size=64m --mount "type=bind,source=$task_temp/data,target=/data" \
   -e "CLONE_MASTER_KEY=$task_master" -e CLONE_ADMIN_USERNAME=fixture_owner -e CLONE_ADMIN_PASSWORD=container-fixture-password-2026 \
-  -e CLONE_CHAT_ENABLED=false "$task_image" --initialize-admin > "$task_temp/fixture-bootstrap.log"
+  -e CLONE_CHAT_ENABLED=false "$task_image" --initialize-admin > "$task_temp/fixture-bootstrap.log"; then
+  # 仅输出启动错误，不打印合成测试身份的注册信息和恢复码。
+  grep -E 'Exception|Caused by:|ERROR|APPLICATION FAILED|Description:|Action:' "$task_temp/fixture-bootstrap.log" || true
+  exit 1
+fi
 docker network create --subnet 172.30.23.0/29 "$task_network" >/dev/null
 docker run -d --name "$task_app" --network "$task_network" --network-alias app --ip 172.30.23.3 \
   --read-only --cap-drop ALL --security-opt no-new-privileges --memory 1g --cpus 1.5 --tmpfs /tmp:mode=1777,size=64m \
@@ -65,9 +69,9 @@ for n in range(3):
     with opener.open(request) as response: assert response.status==200
 assert any(c.name=='CLONE_VISITOR' and c.secure for c in jar)
 with sqlite3.connect((temp/'data/app.db').as_uri()+'?mode=ro',uri=True) as db:
-    keys=[r[0] for r in db.execute("SELECT key FROM rate_limits WHERE key LIKE 'session-create:%'")]
+    keys={r[0].rsplit(':',1)[0] for r in db.execute("SELECT key FROM rate_limits WHERE key LIKE 'session-create:%'")}
 assert len(keys)==1,keys
-assert hashlib.sha256(b'172.30.23.2').hexdigest() not in keys[0], 'Proxy address was used instead of client address'
+assert all(hashlib.sha256(b'172.30.23.2').hexdigest() not in key for key in keys), 'Proxy address was used instead of client address'
 print('HTTPS, Secure cookies and spoofed forwarded-header isolation verified')
 PY
 # 第二个真实网络地址使用已有 Certbot 镜像里的 Python 发请求，验证不共用同一个 IP 桶。
@@ -86,7 +90,8 @@ import sqlite3,sys
 from pathlib import Path
 file=Path(sys.argv[1])/'data/app.db'
 with sqlite3.connect(file.as_uri()+'?mode=ro',uri=True) as db:
-    assert db.execute("SELECT COUNT(*) FROM rate_limits WHERE key LIKE 'session-create:%'").fetchone()[0]==2
+    keys={r[0].rsplit(':',1)[0] for r in db.execute("SELECT key FROM rate_limits WHERE key LIKE 'session-create:%'")}
+    assert len(keys)==2,keys
 print('Distinct client IP rate-limit buckets verified')
 PY
 docker restart "$task_app" >/dev/null

@@ -48,6 +48,20 @@ class OperationsSafetyTest {
   }
 
   @Test
+  void reclaimedSqlitePagesAllowStorageAfterCleanup() {
+    var limits = new OperationsProperties(false, true, 0, 200, 200, 32, 3000, 20, 10);
+    var sources = new SourceService(db, props, clock, limits);
+    db.app().execute("CREATE TABLE capacity_fixture(content BLOB)");
+    db.app().update("INSERT INTO capacity_fixture VALUES(zeroblob(?))", 11 * 1024 * 1024);
+    assertEquals(
+        "DATABASE_CAPACITY_REACHED",
+        assertThrows(ApiException.class, sources::checkStorage).code());
+    db.app().update("DELETE FROM capacity_fixture");
+    assertTrue(db.app().queryForObject("PRAGMA freelist_count", Long.class) > 0);
+    assertDoesNotThrow(sources::checkStorage);
+  }
+
+  @Test
   void interruptedPaidJobKeepsReservationAndRequiresReconciliation() {
     var sources = new SourceService(db, props, clock);
     String subject = UUID.randomUUID().toString();

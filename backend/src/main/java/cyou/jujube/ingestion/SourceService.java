@@ -38,8 +38,10 @@ public class SourceService {
   }
 
   public void checkStorage() {
+    // SQLite 删除后的空闲页可被新写入复用；不能把清理后的数据库永久卡在容量保护中。
     long bytes =
-        db.app().queryForObject("PRAGMA page_count", Long.class)
+        (db.app().queryForObject("PRAGMA page_count", Long.class)
+                - db.app().queryForObject("PRAGMA freelist_count", Long.class))
             * db.app().queryForObject("PRAGMA page_size", Long.class);
     if (bytes >= limits.maxDatabaseMb() * 1024 * 1024)
       throw ApiException.unavailable("DATABASE_CAPACITY_REACHED", "数据库达到当前容量上限，请先清理历史版本或调整经过验证的容量");
@@ -304,7 +306,8 @@ public class SourceService {
   public List<Map<String, Object>> sources() {
     return db.app()
         .queryForList(
-            "SELECT id,name,hash,format,status,created_at,error_code FROM sources ORDER BY created_at DESC LIMIT 200");
+            "SELECT id,name,hash,format,status,created_at,error_code FROM sources ORDER BY created_at DESC,id DESC LIMIT ?",
+            limits.maxSources());
   }
 
   public Map<String, Object> source(String id) {
