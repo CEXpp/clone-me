@@ -16,7 +16,9 @@ services:
     restart: unless-stopped
     read_only: true
     tmpfs:
-      - /tmp:size=64m,mode=1777
+      - /tmp:rw,noexec,nosuid,nodev,size=64m,mode=1777
+      # sqlite-jdbc 的 JNI 仅在此私有内存目录解压和加载，不放宽普通临时目录。
+      - /sqlite-native:rw,exec,nosuid,nodev,size=32m,uid=10001,gid=10001,mode=0700
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
     mem_limit: 1g

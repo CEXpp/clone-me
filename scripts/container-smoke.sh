@@ -20,16 +20,16 @@ mkdir -p "$task_temp/data" "$task_temp/certs/live/clone.test"
 chmod 755 "$task_temp"
 sudo chown 10001:10001 "$task_temp/data"
 task_master="$(python3 -c 'import secrets,base64; print(base64.b64encode(secrets.token_bytes(32)).decode())')"
-if ! docker run --rm --network none --read-only --tmpfs /tmp:mode=1777,size=64m --mount "type=bind,source=$task_temp/data,target=/data" \
+if ! docker run --rm --network none --read-only --tmpfs /tmp:rw,noexec,nosuid,nodev,mode=1777,size=64m --tmpfs /sqlite-native:rw,exec,nosuid,nodev,size=32m,uid=10001,gid=10001,mode=0700 --mount "type=bind,source=$task_temp/data,target=/data" \
   -e "CLONE_MASTER_KEY=$task_master" -e CLONE_ADMIN_USERNAME=fixture_owner -e CLONE_ADMIN_PASSWORD=container-fixture-password-2026 \
   -e CLONE_CHAT_ENABLED=false "$task_image" --initialize-admin > "$task_temp/fixture-bootstrap.log"; then
   # 仅输出启动错误，不打印合成测试身份的注册信息和恢复码。
-  grep -E 'Exception|Caused by:|ERROR|APPLICATION FAILED|Description:|Action:' "$task_temp/fixture-bootstrap.log" || true
+  grep -E 'Exception|UnsatisfiedLinkError|failed to map|GLIBC|Permission denied|Caused by:|ERROR|APPLICATION FAILED|Description:|Action:' "$task_temp/fixture-bootstrap.log" || true
   exit 1
 fi
 docker network create --subnet 172.30.23.0/29 "$task_network" >/dev/null
 docker run -d --name "$task_app" --network "$task_network" --network-alias app --ip 172.30.23.3 \
-  --read-only --cap-drop ALL --security-opt no-new-privileges --memory 1g --cpus 1.5 --tmpfs /tmp:mode=1777,size=64m \
+  --read-only --cap-drop ALL --security-opt no-new-privileges --memory 1g --cpus 1.5 --tmpfs /tmp:rw,noexec,nosuid,nodev,mode=1777,size=64m --tmpfs /sqlite-native:rw,exec,nosuid,nodev,size=32m,uid=10001,gid=10001,mode=0700 \
   --mount "type=bind,source=$task_temp/data,target=/data" -e "CLONE_MASTER_KEY=$task_master" -e CLONE_CHAT_ENABLED=false "$task_image" >/dev/null
 openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj /CN=clone.test \
   -addext 'subjectAltName=DNS:clone.test,IP:127.0.0.1,IP:172.30.23.2' \

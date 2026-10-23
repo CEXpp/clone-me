@@ -29,5 +29,5 @@ check_image_schema() {
   local task_data
   task_data="$(config_value CLONE_DATA_HOST)"
   [[ "$task_data" == /* && "$task_data" != / && "$task_data" != *,* ]] || { echo 'Use an absolute dedicated data directory without commas.' >&2; return 1; }
-  docker run --rm --network none --read-only --mount "type=bind,source=$task_data,target=/data,readonly" "$task_image" --check-data-schema /data
+  docker run --rm --network none --read-only --tmpfs /sqlite-native:rw,exec,nosuid,nodev,size=32m,uid=10001,gid=10001,mode=0700 --mount "type=bind,source=$task_data,target=/data,readonly" "$task_image" --check-data-schema /data
 }

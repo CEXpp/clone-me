@@ -23,7 +23,7 @@ if [[ -f "$task_release" ]]; then
   }
   dc stop app
   task_data="$(config_value CLONE_DATA_HOST)"
-  if ! docker run --rm --network none --read-only --env-file "$task_config" --tmpfs /tmp:size=64m,mode=1777 --mount "type=bind,source=$task_data,target=/data" "$task_old_image" --backup-data; then
+  if ! docker run --rm --network none --read-only --env-file "$task_config" --tmpfs /tmp:rw,noexec,nosuid,nodev,size=64m,mode=1777 --tmpfs /sqlite-native:rw,exec,nosuid,nodev,size=32m,uid=10001,gid=10001,mode=0700 --mount "type=bind,source=$task_data,target=/data" "$task_old_image" --backup-data; then
     echo 'Pre-upgrade backup failed; restarting the unchanged previous application.' >&2
     dc up -d --wait --wait-timeout 150 app
     exit 1
