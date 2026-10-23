@@ -59,18 +59,25 @@ jobs:
           mvn -B -ntp -Psbom cyclonedx:makeAggregateBom
           cd ..
           python3 scripts/check-sbom.py backend/target/bom.json --output backend/target/maven-security.json
-      - name: Test real packaged application in desktop and mobile browsers
-        working-directory: frontend
-        run: |
-          npx playwright install --with-deps chromium
-          npm run test:e2e
       - name: Check deployment scripts and isolated HTTPS container
+        timeout-minutes: 6
         run: |
           for script in scripts/*.sh; do bash -n "$script"; done
           python3 scripts/evaluate.py --cases eval/cases.example.jsonl
           bash scripts/freeze-images.sh
           bash scripts/build-image.sh clone-me:ci
           bash scripts/container-smoke.sh clone-me:ci
+      - name: Install pinned browser on the provisioned Ubuntu runner
+        timeout-minutes: 5
+        working-directory: frontend
+        # ubuntu-latest already supplies Chrome's shared libraries. E2E must
+        # successfully launch Chromium; missing libraries still fail the job.
+        # A minimal self-hosted runner must provision install --with-deps first.
+        run: npx playwright install chromium
+      - name: Test real packaged application in desktop and mobile browsers
+        timeout-minutes: 5
+        working-directory: frontend
+        run: npm run test:e2e
       - name: Retain verified application and reports
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

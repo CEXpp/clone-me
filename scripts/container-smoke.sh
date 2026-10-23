@@ -57,7 +57,7 @@ curl --silent --fail --cacert "$task_temp/certs/live/clone.test/fullchain.pem" h
 curl --silent --fail --cacert "$task_temp/certs/live/clone.test/fullchain.pem" https://127.0.0.1:18443/ | grep -q 'id="app"'
 [[ "$(docker inspect --format '{{.Config.User}}' "$task_app")" == '10001:10001' ]]
 [[ -z "$(docker port "$task_app")" ]]
-python3 - "$task_temp" <<'PY'
+sudo setpriv --reuid=10001 --regid=10001 --clear-groups python3 - "$task_temp" <<'PY'
 from pathlib import Path
 import sys,ssl,json,urllib.request,http.cookiejar,sqlite3,hashlib
 temp=Path(sys.argv[1])
@@ -85,7 +85,7 @@ csrf=json.load(opener.open(base+"/api/auth/csrf"))
 response=opener.open(urllib.request.Request(base+"/api/public/session",data=b"{}",headers={"Content-Type":"application/json",csrf["headerName"]:csrf["token"]}))
 assert response.status==200
 '
-python3 - "$task_temp" <<'PY'
+sudo setpriv --reuid=10001 --regid=10001 --clear-groups python3 - "$task_temp" <<'PY'
 import sqlite3,sys
 from pathlib import Path
 file=Path(sys.argv[1])/'data/app.db'
@@ -94,10 +94,24 @@ with sqlite3.connect(file.as_uri()+'?mode=ro',uri=True) as db:
     assert len(keys)==2,keys
 print('Distinct client IP rate-limit buckets verified')
 PY
+
+# 只读 SQLite 连接仍可能需要创建 WAL/SHM 边车文件，使用与应用相同 UID 的数据挂载。
+docker run --rm --network none --read-only --tmpfs /sqlite-native:rw,exec,nosuid,nodev,size=32m,uid=10001,gid=10001,mode=0700 \
+  --mount "type=bind,source=$task_temp/data,target=/data" "$task_image" --check-data-schema /data
 docker restart "$task_app" >/dev/null
 for task_attempt in $(seq 1 50); do
   if [[ "$(docker inspect --format '{{.State.Health.Status}}' "$task_app")" == healthy ]]; then break; fi
   sleep 2
 done
 [[ "$(docker inspect --format '{{.State.Health.Status}}' "$task_app")" == healthy ]]
+sudo setpriv --reuid=10001 --regid=10001 --clear-groups python3 - "$task_temp" <<'PY'
+import sqlite3,sys
+from pathlib import Path
+file=Path(sys.argv[1])/'data/app.db'
+with sqlite3.connect(file.as_uri()+'?mode=ro',uri=True) as db:
+    keys={r[0].rsplit(':',1)[0] for r in db.execute("SELECT key FROM rate_limits WHERE key LIKE 'session-create:%'")}
+    assert len(keys)==2, 'Rate-limit state was not preserved across restart'
+    assert db.execute('SELECT COUNT(*) FROM admin_account').fetchone()[0]==1
+print('Administrator and client rate-limit state survived container restart')
+PY
 echo 'Container persistence, health and proxy smoke checks passed.'
