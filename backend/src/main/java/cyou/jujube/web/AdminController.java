@@ -4,7 +4,6 @@ import cyou.jujube.ai.EmbeddingProvider;
 import cyou.jujube.ai.GenerationProvider;
 import cyou.jujube.ai.SystemOneDecisions;
 import cyou.jujube.common.ApiException;
-import cyou.jujube.common.Json;
 import cyou.jujube.ingestion.SourceService;
 import cyou.jujube.knowledge.KnowledgeService;
 import cyou.jujube.quota.BudgetService;
@@ -25,6 +24,9 @@ public class AdminController {
   private final SystemOneDecisions decisions;
   private final GenerationProvider generation;
   private final EmbeddingProvider embedding;
+  private final cyou.jujube.knowledge.ProfileService profile;
+  private final cyou.jujube.operations.AdminQueries queries;
+  private final cyou.jujube.operations.RuntimeStatus runtime;
 
   public AdminController(
       SourceService sources,
@@ -33,7 +35,10 @@ public class AdminController {
       BudgetService budget,
       SystemOneDecisions decisions,
       GenerationProvider generation,
-      EmbeddingProvider embedding) {
+      EmbeddingProvider embedding,
+      cyou.jujube.knowledge.ProfileService profile,
+      cyou.jujube.operations.AdminQueries queries,
+      cyou.jujube.operations.RuntimeStatus runtime) {
     this.sources = sources;
     this.knowledge = knowledge;
     this.db = db;
@@ -41,6 +46,9 @@ public class AdminController {
     this.decisions = decisions;
     this.generation = generation;
     this.embedding = embedding;
+    this.profile = profile;
+    this.queries = queries;
+    this.runtime = runtime;
   }
 
   @GetMapping("/sources")
@@ -51,6 +59,24 @@ public class AdminController {
   @GetMapping("/sources/{id}")
   Object source(@PathVariable String id) {
     return sources.source(id);
+  }
+
+  @DeleteMapping("/sources/{id}")
+  Object deleteSource(@PathVariable String id) throws IOException {
+    sources.delete(id);
+    return Map.of("deleted", true);
+  }
+
+  @DeleteMapping("/releases/{id}")
+  Object deleteRelease(@PathVariable String id) {
+    knowledge.delete(id);
+    return Map.of("deleted", true);
+  }
+
+  @PostMapping("/jobs/{id}/cancel")
+  Object cancelJob(@PathVariable String id) {
+    sources.cancel(id);
+    return Map.of("cancelled", true);
   }
 
   @PostMapping(value = "/sources", consumes = "multipart/form-data")
@@ -71,24 +97,29 @@ public class AdminController {
 
   @PutMapping("/candidates/{id}")
   Object candidate(@PathVariable String id, @RequestBody SourceService.CandidateUpdate update) {
-    sources.updateCandidate(id, update);
-    return Map.of("updated", true, "requiresNewRelease", true);
+    if (update.revision() == null)
+      throw ApiException.badRequest("REVISION_REQUIRED", "请获取当前修订号后保存");
+    long revision = sources.updateCandidate(id, update);
+    return Map.of("updated", true, "requiresNewRelease", true, "revision", revision);
   }
 
   public record CandidateEdit(
-      String id, String kind, String content, String mastery, boolean approved) {}
+      String id, String kind, String content, String mastery, boolean approved, Long revision) {}
 
   @PostMapping("/candidates/confirm")
   Object confirm(@RequestBody List<CandidateEdit> edits) {
     if (edits.isEmpty() || edits.size() > 100)
       throw ApiException.badRequest("INVALID_BATCH", "每次确认 1–100 条记录");
+    if (edits.stream().anyMatch(e -> e.revision() == null || e.id() == null)
+        || edits.stream().map(CandidateEdit::id).distinct().count() != edits.size())
+      throw ApiException.badRequest("INVALID_BATCH", "批量编辑需要修订号，且不能重复提交同一记录");
     db.transaction(
         sql -> {
           for (var edit : edits)
             sources.updateCandidate(
                 edit.id(),
                 new SourceService.CandidateUpdate(
-                    edit.kind(), edit.content(), edit.mastery(), edit.approved()));
+                    edit.kind(), edit.content(), edit.mastery(), edit.approved(), edit.revision()));
           return null;
         });
     return Map.of("updated", edits.size(), "requiresNewRelease", true);
@@ -102,7 +133,26 @@ public class AdminController {
 
   @GetMapping("/jobs")
   Object jobs() {
-    return db.app().queryForList("SELECT * FROM jobs ORDER BY created_at DESC LIMIT 100");
+    return queries.jobs("", "").items();
+  }
+
+  @GetMapping("/jobs/page")
+  Object jobsPage(
+      @RequestParam(defaultValue = "") String status,
+      @RequestParam(defaultValue = "") String cursor) {
+    return queries.jobs(status, cursor);
+  }
+
+  @GetMapping("/calls/page")
+  Object callsPage(
+      @RequestParam(defaultValue = "") String status,
+      @RequestParam(defaultValue = "") String cursor) {
+    return queries.calls(status, cursor);
+  }
+
+  @GetMapping("/operations")
+  Object operations() throws IOException {
+    return runtime.overview();
   }
 
   @GetMapping("/jobs/{id}")
@@ -136,30 +186,13 @@ public class AdminController {
 
   @GetMapping("/profile")
   Object profile() {
-    return Json.map(db.setting("profile.public", "{}"));
+    return profile.get();
   }
 
   @PutMapping("/profile")
-  Object profile(@RequestBody Map<String, Object> value) {
-    if (!Set.of(
-            "displayName",
-            "headline",
-            "bio",
-            "skills",
-            "projects",
-            "experiences",
-            "contacts",
-            "filings",
-            "quickQuestions")
-        .containsAll(value.keySet()))
-      throw ApiException.badRequest("INVALID_PROFILE", "个人展示字段不受支持");
-    String encoded = Json.write(value);
-    if (encoded.length() > 30_000) throw ApiException.badRequest("PROFILE_TOO_LARGE", "个人展示内容过长");
-    var publicValue = new LinkedHashMap<>(value);
-    publicValue.put("configured", true);
-    publicValue.put("aiDisclosure", "这是 AI 分身，回答依据为本人确认的资料。");
-    db.putSetting("profile.public", Json.write(publicValue));
-    return Map.of("published", true);
+  Object profile(
+      @jakarta.validation.Valid @RequestBody cyou.jujube.knowledge.ProfileService.Edit value) {
+    return Map.of("published", true, "revision", profile.save(value));
   }
 
   @GetMapping("/usage")
@@ -169,7 +202,7 @@ public class AdminController {
 
   @GetMapping("/calls")
   Object calls() {
-    return db.app().queryForList("SELECT * FROM ai_calls ORDER BY created_at DESC LIMIT 200");
+    return queries.calls("", "").items();
   }
 
   public record Reconcile(java.math.BigDecimal actualCny) {}
@@ -232,5 +265,15 @@ public class AdminController {
     return db.app()
         .queryForList(
             "SELECT id,kind,subject,status,attempts,created_at,last_attempt FROM notification_events ORDER BY created_at DESC LIMIT 100");
+  }
+
+  @PostMapping("/notifications/{id}/retry")
+  Object retryNotification(@PathVariable String id) {
+    if (db.app()
+            .update(
+                "UPDATE notification_events SET status='PENDING',attempts=0,last_attempt=NULL WHERE id=? AND status='FAILED'",
+                id)
+        != 1) throw ApiException.badRequest("NOT_RETRYABLE", "该通知当前不能重发");
+    return Map.of("queued", true);
   }
 }

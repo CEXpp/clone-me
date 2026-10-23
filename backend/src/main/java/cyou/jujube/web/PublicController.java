@@ -26,6 +26,8 @@ public class PublicController {
   private final Database db;
   private final RateLimits limits;
   private final HumanVerification human;
+  private final cyou.jujube.config.OperationsProperties options;
+  private final cyou.jujube.operations.RuntimeStatus runtime;
 
   public PublicController(
       VisitorSessions sessions,
@@ -33,27 +35,45 @@ public class PublicController {
       CloneProperties props,
       Database db,
       RateLimits limits,
-      HumanVerification human) {
+      HumanVerification human,
+      cyou.jujube.config.OperationsProperties options,
+      cyou.jujube.operations.RuntimeStatus runtime) {
     this.sessions = sessions;
     this.chat = chat;
     this.props = props;
     this.db = db;
     this.limits = limits;
     this.human = human;
+    this.options = options;
+    this.runtime = runtime;
   }
 
   @GetMapping("/api/health")
   Map<String, Object> health() {
-    db.app().queryForObject("SELECT 1", Integer.class);
+    runtime.ready();
     return Map.of("status", "UP");
+  }
+
+  @GetMapping("/api/health/live")
+  Map<String, String> live() {
+    return Map.of("status", "UP");
+  }
+
+  @GetMapping("/api/health/ready")
+  Map<String, Object> ready() {
+    return runtime.ready();
   }
 
   @GetMapping("/api/public/profile")
   Object profile() {
-    return Json.map(
-        db.setting(
-            "profile.public",
-            "{\"configured\":false,\"displayName\":\"\",\"headline\":\"\",\"bio\":\"\",\"skills\":[],\"projects\":[],\"experiences\":[],\"quickQuestions\":[],\"aiDisclosure\":\"这是 AI 分身，回答依据为本人确认的资料。\"}"));
+    var value =
+        new java.util.LinkedHashMap<>(
+            Json.map(
+                db.setting(
+                    "profile.public",
+                    "{\"configured\":false,\"displayName\":\"\",\"headline\":\"\",\"bio\":\"\",\"skills\":[],\"projects\":[],\"experiences\":[],\"quickQuestions\":[],\"aiDisclosure\":\"这是 AI 分身，回答依据为本人确认的资料。\"}")));
+    value.put("chatEnabled", options.chatEnabled());
+    return value;
   }
 
   @GetMapping("/api/public/challenge")
@@ -70,8 +90,9 @@ public class PublicController {
       HttpServletResponse response) {
     String ip = RequestFilter.ipHash(request);
     limits.require("session-create", ip, 10, Duration.ofMinutes(1).toMillis());
-    human.check(ip, body == null ? null : body.challengeToken());
+    boolean verified = human.check(ip, body == null ? null : body.challengeToken());
     var created = sessions.create();
+    if (verified) sessions.verified(created.id(), ip);
     cookie(response, created.token(), Duration.ofDays(5));
     return Map.of("sessionId", created.id(), "expiresAt", created.expiresAt());
   }
@@ -95,16 +116,26 @@ public class PublicController {
     return Map.of("cleared", true);
   }
 
-  public record Question(String message, String challengeToken) {}
+  public record Question(String message, String challengeToken, String requestKey) {}
 
   @PostMapping("/api/public/chat")
   ChatService.Answer ask(
       @RequestBody Question body, HttpServletRequest request, HttpServletResponse response) {
+    if (!options.chatEnabled())
+      throw cyou.jujube.common.ApiException.unavailable("CHAT_DISABLED", "聊天暂未开放，可以继续浏览个人介绍与项目");
+    runtime.diskSpace();
     String ip = RequestFilter.ipHash(request);
-    human.check(ip, body.challengeToken());
-    var result = chat.ask(MDC.get("requestId"), token(request), ip, body.message());
+    if (!sessions.hasVerification(token(request), ip) && human.check(ip, body.challengeToken()))
+      sessions.verified(Database.text(sessions.require(token(request)), "id"), ip);
+    var result =
+        chat.ask(MDC.get("requestId"), token(request), ip, body.message(), body.requestKey());
     cookie(response, token(request), Duration.ofDays(5));
     return result;
+  }
+
+  @GetMapping("/api/public/requests/{key}")
+  ChatService.Answer result(@PathVariable String key, HttpServletRequest request) {
+    return sessions.result(token(request), key);
   }
 
   private String token(HttpServletRequest request) {

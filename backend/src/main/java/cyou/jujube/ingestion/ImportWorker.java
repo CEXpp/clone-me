@@ -33,6 +33,7 @@ public class ImportWorker {
   private final Diagnostics diagnostics;
   private final Clock clock;
   private final AtomicBoolean working = new AtomicBoolean();
+  private volatile boolean recovered;
 
   public ImportWorker(
       Database db,
@@ -56,9 +57,21 @@ public class ImportWorker {
   /** 进程重启后把未完成的运行中任务重新排队；已提交的游标和向量保留，避免从头重建。 */
   @EventListener(ApplicationReadyEvent.class)
   public void recover() {
-    db.app()
-        .update(
-            "UPDATE jobs SET status='QUEUED',error_code='PROCESS_RESTARTED' WHERE status='RUNNING'");
+    db.transaction(
+        sql -> {
+          sql.update(
+              "UPDATE ai_calls SET status='UNCERTAIN',error_code='PROCESS_RESTARTED' WHERE status='RESERVED'");
+          sql.update(
+              "UPDATE jobs SET status=CASE WHEN type='EXTRACT' THEN 'PAUSED' ELSE 'QUEUED' END,error_code='PROCESS_RESTARTED',updated_at=? WHERE status='RUNNING'",
+              clock.millis());
+          sql.update(
+              "UPDATE jobs SET status='PAUSED',error_code='RECONCILIATION_REQUIRED',updated_at=? WHERE type='EXTRACT' AND status='QUEUED' AND EXISTS(SELECT 1 FROM ai_calls a WHERE a.request_id=jobs.id AND a.reserved>0 AND a.status='UNCERTAIN')",
+              clock.millis());
+          return null;
+        });
+    db.sessions().update("UPDATE chat_requests SET status='UNCERTAIN' WHERE status='RUNNING'");
+    db.sessions().update("UPDATE visitor_sessions SET lock_id=NULL,lock_until=0");
+    recovered = true;
   }
 
   @org.springframework.beans.factory.annotation.Value("${clone.jobs-enabled:true}")
@@ -66,7 +79,7 @@ public class ImportWorker {
 
   @Scheduled(fixedDelay = 1000)
   public void scheduledTick() {
-    if (enabled) tick();
+    if (enabled && recovered) tick();
   }
 
   /** 原子标志避免调度重入，数据库状态条件更新确保只领取仍在排队的任务，统一记录失败原因。 */
@@ -88,6 +101,7 @@ public class ImportWorker {
           != 1) return;
       MDC.put("requestId", id);
       try {
+        sources.checkStorage();
         switch (Database.text(job, "type")) {
           case "IMPORT" -> parse(job);
           case "EXTRACT" -> extract(job);
@@ -98,13 +112,26 @@ public class ImportWorker {
         String code = ex instanceof ApiException api ? api.code() : ex.getClass().getSimpleName();
         boolean paused =
             Set.of(
-                    "DAILY_BUDGET_REACHED",
-                    "PRICING_REQUIRED",
-                    "PAID_CALLS_PAUSED",
-                    "EMBEDDING_NOT_CONFIGURED",
-                    "GENERATION_NOT_CONFIGURED")
-                .contains(code);
-        state(id, paused ? "PAUSED" : "FAILED", "FAILED", code);
+                        "DAILY_BUDGET_REACHED",
+                        "PRICING_REQUIRED",
+                        "PAID_CALLS_PAUSED",
+                        "EMBEDDING_NOT_CONFIGURED",
+                        "GENERATION_NOT_CONFIGURED")
+                    .contains(code)
+                || Set.of("DISK_SPACE_LOW", "STORAGE_UNAVAILABLE", "DATABASE_CAPACITY_REACHED")
+                    .contains(code);
+        boolean unsettled =
+            db.app()
+                    .queryForObject(
+                        "SELECT COUNT(*) FROM ai_calls WHERE request_id=? AND reserved>0 AND status IN ('RESERVED','UNCERTAIN')",
+                        Long.class,
+                        id)
+                > 0;
+        state(
+            id,
+            paused || unsettled ? "PAUSED" : "FAILED",
+            "FAILED",
+            unsettled ? "RECONCILIATION_REQUIRED" : code);
         diagnostics.event(id, "IMPORT", "JOB_FAILED", Map.of("errorCode", code, "paused", paused));
       } finally {
         MDC.remove("requestId");
@@ -197,10 +224,9 @@ public class ImportWorker {
     var output =
         pending.isEmpty()
             ? Json.read("[]")
-            : Json.read(
-                    Json.objectText(
-                        generation.generate(
-                            jobId, "EXTRACTION", system, Json.write(Map.of("segments", pending)))))
+            : Json.model(
+                    generation.generate(
+                        jobId, "EXTRACTION", system, Json.write(Map.of("segments", pending))))
                 .path("records");
     if (!output.isArray() || output.size() > pending.size())
       throw ApiException.unavailable("INVALID_EXTRACTION", "提取结果格式无效");
@@ -221,7 +247,7 @@ public class ImportWorker {
                 || content.length() > 1800)
               throw ApiException.unavailable("INVALID_EXTRACTION", "提取结果超出资料范围或格式无效");
             sql.update(
-                "UPDATE candidates SET kind=?,content=?,updated_at=? WHERE segment_id=? AND approved=0 AND withdrawn=0 AND manually_edited=0 AND kind='REFERENCE' AND mastery='UNCONFIRMED'",
+                "UPDATE candidates SET kind=?,content=?,revision=revision+1,updated_at=? WHERE segment_id=? AND approved=0 AND withdrawn=0 AND manually_edited=0 AND kind='REFERENCE' AND mastery='UNCONFIRMED'",
                 kind,
                 content,
                 clock.millis(),

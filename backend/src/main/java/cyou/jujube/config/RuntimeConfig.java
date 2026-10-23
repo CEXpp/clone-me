@@ -28,7 +28,13 @@ public class RuntimeConfig {
   }
 
   @Bean
-  DataSource dataSource(CloneProperties props) throws IOException {
+  DataDirectoryLock dataDirectoryLock(CloneProperties props) throws IOException {
+    return new DataDirectoryLock(props.root());
+  }
+
+  @Bean
+  DataSource dataSource(CloneProperties props, DataDirectoryLock dataDirectoryLock)
+      throws IOException {
     Files.createDirectories(props.root());
     return sqlite(props.root().resolve("app.db").toString());
   }

@@ -46,6 +46,7 @@ public class SecurityConfig {
                         "/api/auth/csrf",
                         "/api/auth/login",
                         "/api/health",
+                        "/api/health/**",
                         "/error")
                     .permitAll()
                     .requestMatchers("/api/**")

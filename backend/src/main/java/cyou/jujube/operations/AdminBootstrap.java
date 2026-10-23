@@ -18,10 +18,13 @@ public class AdminBootstrap implements ApplicationRunner {
 
   @Override
   public void run(ApplicationArguments args) {
-    if (!args.containsOption("initialize-admin")) return;
+    if (!args.containsOption("initialize-admin") && !args.containsOption("reset-admin")) return;
     String username = System.getenv().getOrDefault("CLONE_ADMIN_USERNAME", "owner"),
         password = System.getenv("CLONE_ADMIN_PASSWORD");
-    var result = auth.initialize(username, password);
+    var result =
+        args.containsOption("reset-admin")
+            ? auth.reset(username, password)
+            : auth.initialize(username, password);
     // 仅在管理员主动执行本地初始化命令时展示注册秘密，便于导入验证器和离线保存恢复码。
     // 正常启动和 HTTP 请求不会进入此分支；这些秘密不能写入常规日志。
     System.out.println("管理员已创建。以下信息仅显示一次，请在私人终端中保存。不要粘贴到聊天、工单或日志平台。");

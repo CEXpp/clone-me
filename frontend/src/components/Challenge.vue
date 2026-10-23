@@ -7,7 +7,16 @@ import { onMounted, onBeforeUnmount, ref } from "vue";
 declare global {
   interface Window {
     turnstile?: {
-      render: (node: HTMLElement, options: any) => string;
+      render: (
+        node: HTMLElement,
+        options: {
+          sitekey: string;
+          action: string;
+          callback: (token: string) => void;
+          "expired-callback": () => void;
+          "error-callback": () => void;
+        },
+      ) => string;
       remove: (id: string) => void;
       reset: (id: string) => void;
     };

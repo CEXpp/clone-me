@@ -48,6 +48,7 @@ class BudgetAndAuthenticationTest {
     var visitors = new cyou.jujube.conversation.VisitorSessions(db, clock);
     var visitor = visitors.create();
     visitors.save(visitor.id(), "fixture question", "fixture answer");
+    LegacyFixtures.sessions(db);
     db.sessions().execute("ALTER TABLE messages DROP COLUMN metadata_json");
     var upgraded = new Database(RuntimeConfig.sqlite(temp.resolve("app.db").toString()), props);
     var restored = new cyou.jujube.conversation.VisitorSessions(upgraded, clock);

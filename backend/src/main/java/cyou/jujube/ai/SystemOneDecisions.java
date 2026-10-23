@@ -3,6 +3,7 @@ package cyou.jujube.ai;
 import cyou.jujube.common.ApiException;
 import cyou.jujube.common.Diagnostics;
 import cyou.jujube.common.Json;
+import cyou.jujube.common.RequestDeadline;
 import cyou.jujube.config.CloneProperties;
 import cyou.jujube.quota.BudgetService;
 import cyou.jujube.storage.Database;
@@ -84,6 +85,7 @@ public class SystemOneDecisions implements DecisionProvider {
   /** 给每段候选资料分配判断键，校验返回概率并按阈值筛选；异常上抛，由 ChatService 决定回退。 */
   @Override
   public Judgment evaluate(String requestId, String question, List<Evidence> evidence) {
+    RequestDeadline.check();
     String selected = selected();
     if ("disabled".equals(selected)) return new Judgment(evidence, false, Map.of(), "disabled", "");
     Adapter adapter = adapter(selected);
@@ -125,9 +127,12 @@ public class SystemOneDecisions implements DecisionProvider {
             BudgetService.estimate(adapter.price(), BigDecimal.ZERO, bound, 0));
     long started = System.nanoTime();
     try {
+      budget.pricing(
+          reservation,
+          Map.of("inputCnyPerMillion", adapter.price(), "policyVersion", "evidence-v1"));
       var request =
           HttpRequest.newBuilder(URI.create(adapter.url()))
-              .timeout(Duration.ofSeconds(5))
+              .timeout(RequestDeadline.remaining(Duration.ofSeconds(5)))
               .header("Authorization", "Bearer " + adapter.key())
               .header("Content-Type", "application/json")
               .POST(HttpRequest.BodyPublishers.ofString(body))
@@ -135,7 +140,7 @@ public class SystemOneDecisions implements DecisionProvider {
       var response = http.send(request, HttpResponse.BodyHandlers.ofString());
       if (response.statusCode() != 200)
         throw ApiException.unavailable("DECISION_HTTP_" + response.statusCode(), "决策服务暂时不可用");
-      var root = Json.read(response.body());
+      var root = Json.model(response.body());
       var answers = root.path("answers");
       var accepted = new ArrayList<Evidence>();
       var scores = new LinkedHashMap<String, Double>();

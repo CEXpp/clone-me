@@ -309,6 +309,128 @@ class BusinessFlowTest {
   }
 
   @Test
+  void backupPhysicallyRemovesCredentialsAndRestoresSearchableKnowledge() throws Exception {
+    seed(true);
+    var account =
+        Database.required(db.app(), "SELECT password_hash,totp_encrypted FROM admin_account");
+    String recoveryHash =
+        db.app().queryForObject("SELECT hash FROM recovery_codes LIMIT 1", String.class);
+    String sessionHash = Crypto.hash(UUID.randomUUID().toString());
+    db.app()
+        .update(
+            "INSERT INTO admin_sessions(token_hash,expires_at) VALUES(?,?)",
+            sessionHash,
+            System.currentTimeMillis() + 60_000);
+    var created = backups.create();
+    Path archive = backups.archive(created.get("name").toString());
+    try (var zip = new ZipFile(archive.toFile())) {
+      byte[] data = zip.getInputStream(zip.getEntry("app.db")).readAllBytes();
+      String raw = new String(data, StandardCharsets.ISO_8859_1);
+      for (String marker :
+          List.of(
+              account.get("password_hash").toString(),
+              account.get("totp_encrypted").toString(),
+              recoveryHash,
+              sessionHash))
+        assertFalse(raw.contains(marker), "Authentication bytes must not remain in backup");
+    }
+    Path destination = ROOT.resolve("restored-" + UUID.randomUUID());
+    BackupRestore.restore(archive, destination);
+    var restoredProps =
+        new org.springframework.boot.context.properties.bind.Binder(
+                new org.springframework.boot.context.properties.source
+                    .MapConfigurationPropertySource(
+                    Map.of("clone.data-dir", destination.toString())))
+            .bind(
+                "clone",
+                org.springframework.boot.context.properties.bind.Bindable.of(
+                    cyou.jujube.config.CloneProperties.class))
+            .get();
+    var restored =
+        new Database(
+            cyou.jujube.config.RuntimeConfig.sqlite(destination.resolve("app.db").toString()),
+            restoredProps);
+    assertEquals(
+        0L, restored.app().queryForObject("SELECT COUNT(*) FROM admin_account", Long.class));
+    var search =
+        new HybridRetriever(restored, embedding, new Diagnostics(restored, Clock.systemUTC()));
+    assertFalse(
+        search
+            .search("restore-fixture", restored.setting("knowledge.active", ""), "Java 订单")
+            .passages()
+            .isEmpty());
+    assertThrows(java.io.IOException.class, () -> BackupRestore.restore(archive, destination));
+  }
+
+  @Test
+  void duplicateVisitorRequestReturnsStoredAnswerWithoutMoreModelCalls() throws Exception {
+    seed(true);
+    var visitor = sessions.create();
+    var first =
+        chat.ask(
+            "request-original", visitor.token(), "ip-dedupe", "介绍 Java 项目", "client-request-key");
+    int calls = generation.calls.get();
+    var replay =
+        chat.ask(
+            "request-repeated", visitor.token(), "ip-dedupe", "介绍 Java 项目", "client-request-key");
+    assertEquals(first, replay);
+    assertEquals(calls, generation.calls.get());
+    assertEquals(2, sessions.history(visitor.token()).size());
+    assertThrows(
+        ApiException.class,
+        () ->
+            chat.ask(
+                "request-reused", visitor.token(), "ip-dedupe", "另一个问题", "client-request-key"));
+  }
+
+  @Test
+  void staleCandidateRevisionCannotOverwriteAnotherSavedEdit() throws Exception {
+    String candidate = seed(true);
+    long revision =
+        db.app()
+            .queryForObject("SELECT revision FROM candidates WHERE id=?", Long.class, candidate);
+    sources.updateCandidate(
+        candidate,
+        new SourceService.CandidateUpdate("EXPERIENCE", "新人工内容", "USED", false, revision));
+    var conflict =
+        assertThrows(
+            ApiException.class,
+            () ->
+                sources.updateCandidate(
+                    candidate,
+                    new SourceService.CandidateUpdate(
+                        "EXPERIENCE", "旧页面内容", "USED", false, revision)));
+    assertEquals("EDIT_CONFLICT", conflict.code());
+    assertEquals(
+        "新人工内容",
+        db.app()
+            .queryForObject("SELECT content FROM candidates WHERE id=?", String.class, candidate));
+  }
+
+  @Test
+  void deletingOldReleasesKeepsCurrentIndexAndAllowsUnreferencedSourceCleanup() throws Exception {
+    String first = seed(true);
+    String source =
+        db.app().queryForObject("SELECT source_id FROM candidates WHERE id=?", String.class, first);
+    seed(true);
+    assertEquals(
+        "RELEASE_ACTIVE",
+        assertThrows(ApiException.class, () -> knowledge.delete(knowledge.active())).code());
+    assertEquals(
+        "SOURCE_REFERENCED", assertThrows(ApiException.class, () -> sources.delete(source)).code());
+    sources.withdraw(first);
+    knowledge.release("移除旧资料", true);
+    worker.tick();
+    String current = knowledge.active();
+    for (var release : knowledge.releases())
+      if (!current.equals(release.get("id"))) knowledge.delete(release.get("id").toString());
+    sources.delete(source);
+    assertEquals(
+        0L, db.app().queryForObject("SELECT COUNT(*) FROM sources WHERE id=?", Long.class, source));
+    assertFalse(retriever.search("after-cleanup", current, "Java 订单").passages().isEmpty());
+  }
+
+  @Test
   void jsonOwnershipRequiresMappingAndOnlyOwnStatementsBecomeCandidates() throws Exception {
     String json =
         "[{\"speaker\":\"me\",\"content\":\"我了解 Java\"},{\"speaker\":\"them\",\"content\":\"我负责 Kubernetes 运维\"}]";

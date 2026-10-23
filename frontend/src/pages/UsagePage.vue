@@ -7,21 +7,26 @@ import { computed, onMounted, ref } from "vue";
 import { api } from "../api";
 import { useAction, money, date, notify } from "../shared";
 import Drawer from "../components/Drawer.vue";
+import type { Usage, Providers, Call, Page } from "../types";
+import { usePaged } from "../composables/usePaged";
+import Pagination from "../components/Pagination.vue";
 const { busy, error, run } = useAction();
-const usage = ref<any>(null),
-  providers = ref<any>(null),
-  calls = ref<any[]>([]),
+const pages = usePaged<Call>("/api/admin/calls/page");
+const calls = pages.items,
+  callStatus = pages.status;
+const usage = ref<Usage | null>(null),
+  providers = ref<Providers | null>(null),
   selectedProvider = ref("disabled"),
   threshold = ref(0.85),
   callId = ref(""),
   actual = ref(""),
   paidConfirm = ref(false);
 async function load() {
-  [usage.value, providers.value, calls.value] = await Promise.all([
-    api("/api/admin/usage"),
-    api("/api/admin/providers"),
-    api("/api/admin/calls"),
+  [usage.value, providers.value] = await Promise.all([
+    api<Usage>("/api/admin/usage"),
+    api<Providers>("/api/admin/providers"),
   ]);
+  await pages.load();
   selectedProvider.value = providers.value.decision.provider;
   setThreshold();
 }
@@ -34,9 +39,11 @@ function setThreshold() {
     ) || 0.85;
 }
 async function togglePaid() {
+  const current = providers.value;
+  if (!current) return;
   await run(async () => {
     await api("/api/admin/providers/paid", "PUT", {
-      enabled: !providers.value.paidCallsEnabled,
+      enabled: !current.paidCallsEnabled,
     });
     paidConfirm.value = false;
     await load();
@@ -189,7 +196,21 @@ onMounted(() => run(load));
       </form>
     </template>
     <section class="panel space-y-4">
-      <h3 class="section-title">模型调用账本 · 最近 200 次</h3>
+      <h3 class="section-title">模型调用账本</h3>
+      <label class="muted"
+        >筛选状态
+        <select
+          v-model="callStatus"
+          class="field !w-auto"
+          :disabled="busy"
+          @change="run(pages.reset)"
+        >
+          <option value="">全部</option>
+          <option value="UNCERTAIN">待对账</option>
+          <option value="RESERVED">执行中</option>
+          <option value="SETTLED">已结算</option>
+        </select>
+      </label>
       <article
         v-for="call in calls"
         :key="call.id"
@@ -228,6 +249,13 @@ onMounted(() => run(load));
         </button>
       </article>
       <p v-if="!calls.length" class="empty">暂无模型调用。</p>
+      <Pagination
+        :page="pages.previous.value.length + 1"
+        :has-next="!!pages.nextCursor.value"
+        :busy="busy"
+        @next="run(pages.next)"
+        @back="run(pages.back)"
+      />
     </section>
     <Drawer
       :open="paidConfirm"

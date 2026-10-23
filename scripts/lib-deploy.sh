@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# 只加载仓库内的脚本；环境文件由 Compose 作为数据解析，绝不 source 或 eval。
+set -euo pipefail
+task_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+task_config="$task_root/deploy/.env"
+task_release="$task_root/deploy/.release.env"
+task_images="$task_root/deploy/.images.env"
+for task_command in docker python3; do command -v "$task_command" >/dev/null || { echo "Missing command: $task_command" >&2; exit 1; }; done
+docker compose version >/dev/null
+[[ -f "$task_config" ]] || { echo "Create deploy/.env first." >&2; exit 1; }
+
+dc() {
+  local task_args=(--env-file "$task_config" --env-file "$task_release")
+  if [[ -f "$task_images" ]]; then task_args+=(--env-file "$task_images"); fi
+  docker compose "${task_args[@]}" -f "$task_root/deploy/compose.yml" "$@"
+}
+
+immutable_image() { [[ "$1" =~ ^[a-zA-Z0-9./:_-]+@sha256:[a-f0-9]{64}$ ]]; }
+image_value() { sed -n "s/^$1=//p" "$task_images"; }
+config_value() {
+  # 捕获配置仅在管道内传递，只打印指定的非敏感路径或域名。
+  dc config --format json | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["services"]["app"]["environment"].get(sys.argv[1],""))' "$1"
+}
+check_image_schema() {
+  local task_image="$1"
+  [[ "$(docker image inspect --format '{{index .Config.Labels "cyou.jujube.schema-version"}}' "$task_image")" =~ ^[0-9]+$ ]] || {
+    echo "Target image has no schema compatibility contract; do not roll back blindly." >&2; return 1;
+  }
+  local task_data
+  task_data="$(config_value CLONE_DATA_HOST)"
+  [[ "$task_data" == /* && "$task_data" != / && "$task_data" != *,* ]] || { echo 'Use an absolute dedicated data directory without commas.' >&2; return 1; }
+  docker run --rm --network none --read-only --mount "type=bind,source=$task_data,target=/data,readonly" "$task_image" --check-data-schema /data
+}

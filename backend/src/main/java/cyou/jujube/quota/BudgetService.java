@@ -102,6 +102,14 @@ public class BudgetService {
     return result;
   }
 
+  public void pricing(Reservation reservation, Map<String, ?> pricing) {
+    db.app()
+        .update(
+            "UPDATE ai_calls SET pricing_json=? WHERE id=? AND status='RESERVED'",
+            cyou.jujube.common.Json.write(pricing),
+            reservation.id());
+  }
+
   /** 只结算仍为预留状态的调用，扣回预留并累加实际估算额；重复结算直接跳过。 */
   public synchronized void settle(
       Reservation reservation, long actual, long input, long output, long duration) {
@@ -123,6 +131,17 @@ public class BudgetService {
               reservation.maximum(),
               actual,
               call.get("day"));
+          if (actual > reservation.maximum()) {
+            sql.update(
+                "INSERT INTO settings(key,value) VALUES('ai.paid-enabled','false') ON CONFLICT(key) DO UPDATE SET value='false'");
+            sql.update(
+                "INSERT OR IGNORE INTO notification_events(id,kind,subject,body,created_at) VALUES(?,?,?,?,?)",
+                "overrun:" + reservation.id(),
+                "RESERVATION_EXCEEDED",
+                "模型费用超过预留，已暂停付费调用",
+                "请核对供应商用量与配置价格，再主动恢复付费调用。",
+                clock.millis());
+          }
           Long lifetime =
               sql.queryForObject(
                   "SELECT COALESCE(SUM(actual),0) FROM ai_calls WHERE status='SETTLED'",

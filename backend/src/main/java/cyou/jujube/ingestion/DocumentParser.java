@@ -26,6 +26,17 @@ public class DocumentParser {
   public record Mapping(String textField, String speakerField, String selfSpeaker) {
     public static Mapping from(String json) {
       var value = Json.read(json);
+      if (value == null || !value.isObject())
+        throw ApiException.badRequest("INVALID_MAPPING", "字段映射必须是 JSON 对象");
+      for (String field : List.of("textField", "speakerField"))
+        if (value.has(field)
+            && (!value.path(field).isTextual()
+                || !value.path(field).asText().matches("[A-Za-z0-9_\\p{IsHan}.-]{1,80}")))
+          throw ApiException.badRequest("INVALID_MAPPING", "内容和说话者字段需为有效字段名");
+      if (value.has("selfSpeaker")
+          && (!value.path("selfSpeaker").isTextual()
+              || value.path("selfSpeaker").asText().length() > 120))
+        throw ApiException.badRequest("INVALID_MAPPING", "本人说话者标识无效");
       return new Mapping(
           value.path("textField").asText("content"),
           value.path("speakerField").asText("speaker"),
@@ -92,10 +103,19 @@ public class DocumentParser {
     try (var zip = new ZipInputStream(Files.newInputStream(file))) {
       ZipEntry entry;
       int count = 0;
+      int expanded = 0;
       while ((entry = zip.getNextEntry()) != null) {
         if (++count > 1000) throw ApiException.badRequest("ARCHIVE_TOO_COMPLEX", "DOCX 结构超过解析限制");
-        if (!"word/document.xml".equals(entry.getName())) continue;
+        if (!"word/document.xml".equals(entry.getName())) {
+          byte[] ignored = zip.readNBytes(4_000_001 - expanded);
+          expanded += ignored.length;
+          if (expanded > 4_000_000)
+            throw ApiException.badRequest("ARCHIVE_TOO_LARGE", "DOCX 累计解压内容超过限制");
+          continue;
+        }
         byte[] xml = zip.readNBytes(2_000_001);
+        if (expanded + xml.length > 4_000_000)
+          throw ApiException.badRequest("ARCHIVE_TOO_LARGE", "DOCX 累计解压内容超过限制");
         if (xml.length > 2_000_000)
           throw ApiException.badRequest("DOCUMENT_TOO_LARGE", "DOCX 正文超过解析限制");
         XMLInputFactory factory = XMLInputFactory.newFactory();

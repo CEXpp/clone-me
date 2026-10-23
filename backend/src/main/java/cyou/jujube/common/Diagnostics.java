@@ -22,14 +22,21 @@ public class Diagnostics {
   /** 保存可检索阶段事件，并临时关联日志请求编号；结束后恢复原有上下文，避免后台任务串号。 */
   public void event(String requestId, String stage, String event, Map<String, ?> details) {
     String detail = Json.write(details);
-    db.app()
-        .update(
-            "INSERT INTO diagnostic_events(request_id,stage,event,detail_json,created_at) VALUES(?,?,?,?,?)",
-            requestId,
-            stage,
-            event,
-            detail,
-            clock.millis());
+    try {
+      db.app()
+          .update(
+              "INSERT INTO diagnostic_events(request_id,stage,event,detail_json,created_at) VALUES(?,?,?,?,?)",
+              requestId,
+              stage,
+              event,
+              detail,
+              clock.millis());
+    } catch (RuntimeException ex) {
+      // 诊断不是业务提交条件，不能把已完成的回答或费用结算改报为失败。
+      LOG.warn(
+          "stage=DIAGNOSTICS event=DIAGNOSTICS_WRITE_FAILED errorType={}",
+          ex.getClass().getSimpleName());
+    }
     String previous = org.slf4j.MDC.get("requestId");
     org.slf4j.MDC.put("requestId", requestId);
     try {

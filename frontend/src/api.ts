@@ -14,6 +14,19 @@ export class ApiError extends Error {
 }
 let csrf: { token: string; headerName: string } | undefined;
 let csrfPending: Promise<void> | undefined;
+async function timedFetch(
+  path: string,
+  options: RequestInit,
+  timeout = 90_000,
+) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeout);
+  try {
+    return await fetch(path, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
 export function resetCsrf() {
   csrf = undefined;
 }
@@ -21,23 +34,44 @@ export function resetCsrf() {
 export async function refreshCsrf() {
   if (csrfPending) return csrfPending;
   csrfPending = (async () => {
-    const res = await fetch("/api/auth/csrf", {
-      credentials: "same-origin",
-      cache: "no-store",
-    });
+    const res = await timedFetch(
+      "/api/auth/csrf",
+      {
+        credentials: "same-origin",
+        cache: "no-store",
+      },
+      10_000,
+    );
     if (!res.ok)
       throw new ApiError(
         res.status,
         "CSRF_UNAVAILABLE",
         "无法建立安全连接，请稍后重试",
       );
-    csrf = await res.json();
+    const value: unknown = await res.json();
+    if (
+      !value ||
+      typeof value !== "object" ||
+      !("token" in value) ||
+      !("headerName" in value) ||
+      typeof value.token !== "string" ||
+      !value.token ||
+      value.token.length > 1000 ||
+      typeof value.headerName !== "string" ||
+      !/^[A-Za-z0-9-]{1,100}$/.test(value.headerName)
+    )
+      throw new ApiError(
+        503,
+        "CSRF_UNAVAILABLE",
+        "安全令牌无效，请刷新页面后重试",
+      );
+    csrf = { token: value.token, headerName: value.headerName };
   })().finally(() => {
     csrfPending = undefined;
   });
   return csrfPending;
 }
-export async function api<T = any>(
+export async function api<T = unknown>(
   path: string,
   method = "GET",
   body?: unknown,
@@ -55,7 +89,7 @@ export async function api<T = any>(
     headers.set("Content-Type", "application/json");
   let response: Response;
   try {
-    response = await fetch(path, {
+    response = await timedFetch(path, {
       method,
       headers,
       credentials: "same-origin",
@@ -74,19 +108,28 @@ export async function api<T = any>(
       "网络连接中断。操作可能已被处理，请先刷新记录，勿重复提交。",
     );
   }
-  const value = await response.json().catch(() => ({}));
+  const value: unknown = await response.json().catch(() => ({}));
+  const failure =
+    typeof value === "object" && value !== null
+      ? (value as Record<string, unknown>)
+      : {};
   if (!response.ok) {
     if (response.status === 401 && path.startsWith("/api/admin/"))
       window.dispatchEvent(new Event("admin-session-expired"));
-    if (response.status === 403 && value.code === "ACCESS_DENIED") resetCsrf(); // 清除旧令牌，等待用户下次主动提交时刷新；此处不重发可能已经执行的付费请求。
+    if (response.status === 403 && failure.code === "ACCESS_DENIED")
+      resetCsrf(); // 清除旧令牌，等待用户下次主动提交时刷新；此处不重发可能已经执行的付费请求。
     throw new ApiError(
       response.status,
-      value.code || "REQUEST_FAILED",
-      value.message || "操作未完成，请稍后重试",
-      value.requestId || response.headers.get("X-Request-Id") || "",
+      typeof failure.code === "string" ? failure.code : "REQUEST_FAILED",
+      typeof failure.message === "string"
+        ? failure.message
+        : "操作未完成，请稍后重试",
+      typeof failure.requestId === "string"
+        ? failure.requestId
+        : response.headers.get("X-Request-Id") || "",
     );
   }
-  return value;
+  return value as T;
 }
 /** 通过认证请求取二进制文件，临时对象地址只用于当前浏览器下载，使用后及时释放。 */
 export async function downloadBackup(name: string) {

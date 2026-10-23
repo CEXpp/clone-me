@@ -3,16 +3,12 @@ package cyou.jujube.storage;
 import cyou.jujube.common.ApiException;
 import cyou.jujube.config.CloneProperties;
 import cyou.jujube.config.RuntimeConfig;
-import java.nio.charset.StandardCharsets;
-import java.sql.Connection;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
 import javax.sql.DataSource;
-import org.springframework.core.io.ClassPathResource;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
-import org.springframework.jdbc.datasource.init.ScriptUtils;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -29,36 +25,12 @@ public class Database {
 
   public Database(DataSource dataSource, CloneProperties props) throws Exception {
     DataSource visitorSource = RuntimeConfig.sqlite(props.root().resolve("sessions.db").toString());
-    initialize(dataSource, "schema-app.sql");
-    initialize(visitorSource, "schema-sessions.sql");
+    SchemaMigrations.migrate(dataSource, "app");
+    SchemaMigrations.migrate(visitorSource, "sessions");
     app = new JdbcTemplate(dataSource);
     sessions = new JdbcTemplate(visitorSource);
-    // 兼容旧版本会话库：先检查列是否存在，再补充回复元数据，保留已有聊天记录。
-    if (sessions.queryForList("PRAGMA table_info(messages)").stream()
-        .noneMatch(column -> "metadata_json".equals(column.get("name"))))
-      sessions.execute("ALTER TABLE messages ADD COLUMN metadata_json TEXT NOT NULL DEFAULT '{}'");
     transactions = new TransactionTemplate(new DataSourceTransactionManager(dataSource));
     visitorTransactions = new TransactionTemplate(new DataSourceTransactionManager(visitorSource));
-    // 旧记录无法可靠区分人工草稿和机器草稿，升级时保守保护全部旧候选；迁移可重复执行。
-    transaction(
-        sql -> {
-          if (sql.queryForList("PRAGMA table_info(candidates)").stream()
-              .noneMatch(column -> "manually_edited".equals(column.get("name")))) {
-            sql.execute(
-                "ALTER TABLE candidates ADD COLUMN manually_edited INTEGER NOT NULL DEFAULT 0");
-            sql.update("UPDATE candidates SET manually_edited=1");
-          }
-          return null;
-        });
-  }
-
-  private void initialize(DataSource source, String schema) throws Exception {
-    try (Connection connection = source.getConnection()) {
-      ScriptUtils.executeSqlScript(
-          connection,
-          new org.springframework.core.io.support.EncodedResource(
-              new ClassPathResource(schema), StandardCharsets.UTF_8));
-    }
   }
 
   public JdbcTemplate app() {

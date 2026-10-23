@@ -33,3 +33,9 @@ dist/
 
 # 仅供本机测试的配置
 *.local
+deploy/.release.env*
+deploy/.previous.env
+deploy/.images.env*
+frontend/test-results/
+frontend/playwright-report/
+eval/private/

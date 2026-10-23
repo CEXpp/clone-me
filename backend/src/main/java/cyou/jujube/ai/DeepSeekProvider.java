@@ -2,6 +2,7 @@ package cyou.jujube.ai;
 
 import cyou.jujube.common.ApiException;
 import cyou.jujube.common.Diagnostics;
+import cyou.jujube.common.RequestDeadline;
 import cyou.jujube.config.CloneProperties;
 import cyou.jujube.quota.BudgetService;
 import java.nio.charset.StandardCharsets;
@@ -60,6 +61,7 @@ public class DeepSeekProvider implements GenerationProvider {
   /** 先检查配置及上下文上限并预留费用，再发起一次模型调用；成功按用量结算，异常保留预留等待对账。 */
   @Override
   public String generate(String requestId, String stage, String system, String user) {
+    RequestDeadline.check();
     if (!configured()) throw ApiException.unavailable("GENERATION_NOT_CONFIGURED", "尚未配置生成模型");
     long inputBound = (system + user).getBytes(StandardCharsets.UTF_8).length + 4096L;
     if (inputBound > 40_000)
@@ -73,7 +75,25 @@ public class DeepSeekProvider implements GenerationProvider {
     var reservation = budget.require(requestId, stage, "deepseek", props.deepseekModel(), maximum);
     long started = System.nanoTime();
     try {
-      var response = client().prompt().system(system).user(user).call().chatResponse();
+      budget.pricing(
+          reservation,
+          Map.of(
+              "inputCnyPerMillion",
+              props.deepseekInputCnyPerMillion(),
+              "outputCnyPerMillion",
+              props.deepseekOutputCnyPerMillion(),
+              "policyVersion",
+              "byte-upper-bound-v1"));
+      var response =
+          client()
+              .prompt()
+              .system(system)
+              .user(user)
+              .options(
+                  OpenAiChatOptions.builder()
+                      .timeout(RequestDeadline.remaining(Duration.ofSeconds(25))))
+              .call()
+              .chatResponse();
       if (response == null
           || response.getResult() == null
           || response.getResult().getOutput() == null)

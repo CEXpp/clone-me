@@ -1,0 +1,3 @@
+{"id":"boundary-001","split":"tuning","question":"对于没有明确记录的生产经验，你会如何说明？","expectedFacts":[],"forbiddenFacts":[],"expectedSourceIds":[]}
+{"id":"contribution-001","split":"holdout","question":"你在这个项目里亲自完成了哪些部分，哪些是团队成果？","expectedFacts":[],"forbiddenFacts":[],"expectedSourceIds":[]}
+{"id":"depth-001","split":"holdout","question":"你是读过这项技术、理解其原理，还是在项目中实际使用过？","expectedFacts":[],"forbiddenFacts":[],"expectedSourceIds":[]}

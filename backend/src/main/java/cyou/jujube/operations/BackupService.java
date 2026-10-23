@@ -4,7 +4,9 @@ import cyou.jujube.common.ApiException;
 import cyou.jujube.common.Json;
 import cyou.jujube.config.CloneProperties;
 import cyou.jujube.config.RuntimeConfig;
+import cyou.jujube.security.Crypto;
 import cyou.jujube.storage.Database;
+import cyou.jujube.storage.SchemaMigrations;
 import java.io.*;
 import java.nio.file.*;
 import java.time.Clock;
@@ -58,30 +60,45 @@ public class BackupService {
     Path directory = props.root().resolve("backups");
     Files.createDirectories(directory);
     String id = "backup-" + clock.millis() + "-" + UUID.randomUUID().toString().substring(0, 8);
-    Path snapshot = directory.resolve(id + ".db"), archive = directory.resolve(id + ".zip");
+    Path snapshot = directory.resolve(id + ".db"),
+        sanitized = directory.resolve(id + ".clean.db"),
+        partial = directory.resolve(id + ".partial"),
+        archive = directory.resolve(id + ".zip");
     try {
       db.app().execute("VACUUM INTO '" + snapshot.toString().replace("'", "''") + "'");
       var backupDb = new JdbcTemplate(RuntimeConfig.sqlite(snapshot.toString()));
       backupDb.update("DELETE FROM admin_sessions");
       backupDb.update("DELETE FROM recovery_codes");
       backupDb.update("DELETE FROM admin_account");
-      backupDb.execute("PRAGMA wal_checkpoint(TRUNCATE)");
-      backupDb.execute("PRAGMA journal_mode=DELETE");
-      List<Path> originals;
+      // DELETE 不保证擦除旧页。再次 VACUUM INTO 只复制存活数据，归档从不包含第一次快照。
+      backupDb.execute("VACUUM INTO '" + sanitized.toString().replace("'", "''") + "'");
+      var cleanDb = new JdbcTemplate(RuntimeConfig.sqlite(sanitized.toString()));
+      List<Path> originals = new ArrayList<>();
       Path sources = props.root().resolve("sources");
-      if (Files.isDirectory(sources)) {
-        try (var paths = Files.list(sources)) {
-          originals = paths.filter(Files::isRegularFile).toList();
-        }
-      } else originals = List.of();
-      long planned = Files.size(snapshot);
+      // 仅收录快照引用的原件；检查名称与内容哈希，缺失或损坏时不生成貌似完整的备份。
+      for (var source :
+          cleanDb.queryForList("SELECT file_name,hash FROM sources ORDER BY file_name")) {
+        String file = Database.text(source, "file_name");
+        if (!file.matches("[a-f0-9-]{36}\\.(md|txt|pdf|docx|json)"))
+          throw new IOException("Invalid stored source name");
+        Path original = sources.resolve(file);
+        if (!Files.isRegularFile(original, LinkOption.NOFOLLOW_LINKS)
+            || !Crypto.hash(original).equals(source.get("hash")))
+          throw new IOException("Missing or damaged source file");
+        originals.add(original);
+      }
+      long planned = Files.size(sanitized);
       for (Path path : originals) planned += Files.size(path);
       if (planned > MAX_TOTAL)
         throw ApiException.badRequest("BACKUP_TOO_LARGE", "资料超过备份容量限制，请先调整容量或清理资料");
+      Map<String, String> hashes = new LinkedHashMap<>();
+      hashes.put("app.db", Crypto.hash(sanitized));
+      for (Path original : originals)
+        hashes.put("sources/" + original.getFileName(), Crypto.hash(original));
       try (var zip =
-          new ZipOutputStream(Files.newOutputStream(archive, StandardOpenOption.CREATE_NEW))) {
+          new ZipOutputStream(Files.newOutputStream(partial, StandardOpenOption.CREATE_NEW))) {
         zip.putNextEntry(new ZipEntry("app.db"));
-        Files.copy(snapshot, zip);
+        Files.copy(sanitized, zip);
         zip.closeEntry();
         for (Path path : originals) {
           zip.putNextEntry(new ZipEntry("sources/" + path.getFileName()));
@@ -89,14 +106,22 @@ public class BackupService {
           zip.closeEntry();
         }
         var versions =
-            backupDb.queryForList(
+            cleanDb.queryForList(
                 "SELECT value FROM settings WHERE key='knowledge.active'", String.class);
         zip.putNextEntry(new ZipEntry("manifest.json"));
         zip.write(
             Json.write(
                     Map.of(
+                        "formatVersion",
+                        2,
                         "schemaVersion",
-                        1,
+                        SchemaMigrations.version(cleanDb),
+                        "sessionSchemaVersion",
+                        SchemaMigrations.VERSION,
+                        "applicationVersion",
+                        System.getenv().getOrDefault("CLONE_BUILD_REVISION", "development"),
+                        "sha256",
+                        hashes,
                         "createdAt",
                         clock.millis(),
                         "knowledgeVersion",
@@ -106,6 +131,11 @@ public class BackupService {
                             "visitor sessions", "administrator credentials", "API keys", "logs")))
                 .getBytes(java.nio.charset.StandardCharsets.UTF_8));
         zip.closeEntry();
+      }
+      try {
+        Files.move(partial, archive, StandardCopyOption.ATOMIC_MOVE);
+      } catch (AtomicMoveNotSupportedException ex) {
+        Files.move(partial, archive);
       }
       rotate(directory);
       LOG.info("stage=BACKUP event=BACKUP_CREATED backupId={}", id);
@@ -118,6 +148,7 @@ public class BackupService {
           clock.millis());
     } catch (Exception ex) {
       Files.deleteIfExists(archive);
+      Files.deleteIfExists(partial);
       if (ex instanceof IOException io) throw io;
       if (ex instanceof RuntimeException runtime) throw runtime;
       throw new IOException(ex);
@@ -125,6 +156,9 @@ public class BackupService {
       Files.deleteIfExists(snapshot);
       Files.deleteIfExists(directory.resolve(id + ".db-wal"));
       Files.deleteIfExists(directory.resolve(id + ".db-shm"));
+      Files.deleteIfExists(sanitized);
+      Files.deleteIfExists(directory.resolve(id + ".clean.db-wal"));
+      Files.deleteIfExists(directory.resolve(id + ".clean.db-shm"));
     }
   }
 

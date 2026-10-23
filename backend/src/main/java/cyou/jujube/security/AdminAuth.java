@@ -33,6 +33,17 @@ public class AdminAuth {
 
   public record Bootstrap(String secret, List<String> recoveryCodes) {}
 
+  /** 仅由离线维护命令使用，整个轮换在同一事务中完成并撤销全部旧会话。 */
+  public synchronized Bootstrap reset(String username, String password) {
+    return db.transaction(
+        sql -> {
+          sql.update("DELETE FROM admin_sessions");
+          sql.update("DELETE FROM recovery_codes");
+          sql.update("DELETE FROM admin_account");
+          return initialize(username, password);
+        });
+  }
+
   /** 只允许创建一次管理员；密码用 BCrypt，动态口令秘密加密，恢复码仅保存哈希。 */
   public synchronized Bootstrap initialize(String username, String password) {
     if (username == null

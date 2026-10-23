@@ -5,19 +5,40 @@
  */
 import { onMounted, ref } from "vue";
 import { api, downloadBackup } from "../api";
+import type { Backup, Notification } from "../types";
 import { useAction, date, notify } from "../shared";
 const { busy, error, run } = useAction();
-const backups = ref<any[]>([]),
-  notifications = ref<any[]>([]);
+const backups = ref<Backup[]>([]),
+  notifications = ref<Notification[]>([]);
+const operations = ref<{
+  freeDiskBytes: number;
+  schemaVersion: number;
+  stalledJobs: number;
+  uncertainCalls: number;
+  failedNotifications: number;
+  tlsExpiresAt: number;
+} | null>(null);
 async function load() {
   [backups.value, notifications.value] = await Promise.all([
-    api("/api/admin/backups"),
-    api("/api/admin/notifications"),
+    api<Backup[]>("/api/admin/backups"),
+    api<Notification[]>("/api/admin/notifications"),
   ]);
+  operations.value = await api("/api/admin/operations");
+}
+async function retryNotification(id: string) {
+  await run(async () => {
+    await api(
+      "/api/admin/notifications/" + encodeURIComponent(id) + "/retry",
+      "POST",
+      {},
+    );
+    await load();
+    notify("通知已重新排队");
+  });
 }
 async function create() {
   await run(async () => {
-    const result = await api("/api/admin/backups", "POST", {});
+    const result = await api<Backup>("/api/admin/backups", "POST", {});
     await load();
     notify("一致性备份已创建 " + result.name);
   });
@@ -31,6 +52,23 @@ onMounted(() => run(load));
       <button class="btn" :disabled="busy" @click="run(load)">刷新状态</button>
     </div>
     <p v-if="error" role="alert" class="error">{{ error }}</p>
+    <section v-if="operations" class="panel space-y-2">
+      <h3 class="section-title">运行状态</h3>
+      <p class="muted">
+        可用磁盘 {{ (operations.freeDiskBytes / 1024 / 1024).toFixed(0) }} MB ·
+        数据库版本 {{ operations.schemaVersion }} · 停滞任务
+        {{ operations.stalledJobs }} · 待核对调用
+        {{ operations.uncertainCalls }}
+      </p>
+      <p class="muted">
+        通知失败 {{ operations.failedNotifications }} · 证书到期
+        {{
+          operations.tlsExpiresAt
+            ? date(operations.tlsExpiresAt)
+            : "尚未由主机上报，请检查续期任务"
+        }}
+      </p>
+    </section>
     <section class="panel space-y-4">
       <div class="flex justify-between items-center flex-wrap gap-3">
         <h3 class="section-title">一致性备份</h3>
@@ -67,8 +105,8 @@ onMounted(() => run(load));
     <section class="panel space-y-4">
       <h3 class="section-title">邮件通知记录</h3>
       <p class="muted">
-        需先配置 SMTP 与收件人；PENDING 表示尚未送达，自动最多尝试 3
-        次，暂无手动重发接口。
+        需先配置 SMTP 与收件人；PENDING 表示尚未送达，自动最多尝试 3 次，FAILED
+        表示自动尝试已结束，可以修复配置后主动重发。
       </p>
       <article
         v-for="item in notifications"
@@ -86,6 +124,14 @@ onMounted(() => run(load));
         <p v-if="item.last_attempt" class="muted">
           最近尝试：{{ date(item.last_attempt) }}
         </p>
+        <button
+          v-if="item.status === 'FAILED'"
+          class="btn"
+          :disabled="busy"
+          @click="retryNotification(item.id)"
+        >
+          重新发送通知
+        </button>
       </article>
       <p v-if="!notifications.length" class="empty">暂无通知事件。</p>
     </section>

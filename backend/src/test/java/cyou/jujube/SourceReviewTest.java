@@ -139,6 +139,7 @@ class SourceReviewTest {
 
   @Test
   void legacyCandidatesArePreservedAndMigrationCanRunAgain() throws Exception {
+    LegacyFixtures.app(db);
     db.app().execute("ALTER TABLE candidates DROP COLUMN manually_edited");
     var upgraded = new Database(RuntimeConfig.sqlite(root.resolve("app.db").toString()), props);
     assertEquals(1L, Database.number(candidate(), "manually_edited"));

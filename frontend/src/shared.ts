@@ -92,6 +92,8 @@ export interface Link {
   url: string;
 }
 export interface Profile {
+  revision?: number;
+  chatEnabled?: boolean;
   configured?: boolean;
   displayName: string;
   headline: string;
@@ -128,13 +130,23 @@ export const profile = ref<Profile>({
   quickQuestions: [],
 });
 /** 对每层字段检查类型并提供空值，兼容未配置资料与旧数据，绝不填入虚构履历。 */
-export function normalizeProfile(raw: any): Profile {
+export function normalizeProfile(input: unknown): Profile {
+  const raw: Record<string, unknown> =
+    input && typeof input === "object"
+      ? (input as Record<string, unknown>)
+      : {};
   const text = (v: unknown) => (typeof v === "string" ? v : "");
   const rows = (v: unknown) =>
-    Array.isArray(v) ? v.filter((r) => r && typeof r === "object") : [];
+    Array.isArray(v)
+      ? v.filter(
+          (r): r is Record<string, unknown> => !!r && typeof r === "object",
+        )
+      : [];
   const links = (v: unknown) =>
     rows(v).map((r) => ({ label: text(r.label), url: text(r.url) }));
   return {
+    revision: typeof raw.revision === "number" ? raw.revision : 0,
+    chatEnabled: raw.chatEnabled !== false,
     configured: raw?.configured === true,
     displayName: text(raw?.displayName),
     headline: text(raw?.headline),

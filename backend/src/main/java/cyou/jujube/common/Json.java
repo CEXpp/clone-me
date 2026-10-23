@@ -1,13 +1,13 @@
 package cyou.jujube.common;
 
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.Map;
+import tools.jackson.core.type.TypeReference;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
 
-/** 集中处理内部 JSON 序列化、解析和模型返回对象的提取。 这里使用 Jackson 2 的树结构；不要据此更改 Spring Boot 管理的 HTTP 消息转换器。 */
+/** 内部 JSON 统一使用 Boot 管理的 Jackson 3，复用不可变 Mapper；HTTP 转换仍由 Boot 配置。 */
 public final class Json {
-  private static final ObjectMapper MAPPER = new ObjectMapper();
+  private static final JsonMapper MAPPER = JsonMapper.builder().build();
 
   private Json() {}
 
@@ -32,6 +32,24 @@ public final class Json {
       return MAPPER.readValue(value, new TypeReference<>() {});
     } catch (Exception ex) {
       throw ApiException.badRequest("INVALID_JSON", "JSON 格式无效");
+    }
+  }
+
+  public static JsonNode model(String value) {
+    try {
+      JsonNode result = read(objectText(value));
+      if (result == null || !result.isObject()) throw new IllegalArgumentException();
+      return result;
+    } catch (Exception ex) {
+      throw ApiException.unavailable("INVALID_MODEL_RESPONSE", "外部服务返回的结构无效，请稍后再试");
+    }
+  }
+
+  public static <T> T decode(String value, Class<T> type) {
+    try {
+      return MAPPER.readValue(value, type);
+    } catch (Exception ex) {
+      throw new IllegalStateException("Stored JSON is invalid", ex);
     }
   }
 

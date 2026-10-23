@@ -20,6 +20,16 @@ beforeEach(() => {
 });
 afterEach(() => vi.unstubAllGlobals());
 describe("请求安全与防止重复计费", () => {
+  it("无效安全令牌阻止写请求，而不是发送缺少防伪头的请求", async () => {
+    const fetch = vi
+      .fn()
+      .mockResolvedValue(json({ token: null, headerName: "X-XSRF-TOKEN" }));
+    vi.stubGlobal("fetch", fetch);
+    await expect(api("/api/admin/sources", "POST", {})).rejects.toMatchObject({
+      code: "CSRF_UNAVAILABLE",
+    });
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
   it("连续写操作各自获取当前令牌，避免登录状态变化后沿用旧令牌", async () => {
     const fetch = vi
       .fn()

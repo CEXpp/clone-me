@@ -6,10 +6,6 @@ import cyou.jujube.common.Diagnostics;
 import cyou.jujube.security.Crypto;
 import cyou.jujube.storage.Database;
 import java.util.*;
-import org.slf4j.MDC;
-import org.springframework.ai.document.Document;
-import org.springframework.ai.rag.Query;
-import org.springframework.ai.rag.retrieval.search.DocumentRetriever;
 import org.springframework.stereotype.Service;
 
 /**
@@ -17,7 +13,7 @@ import org.springframework.stereotype.Service;
  * 向量故障或指纹不符时保留关键词路径，并记录原因；所有路径均排除表达样例和已撤回记录。
  */
 @Service
-public class HybridRetriever implements DocumentRetriever {
+public class HybridRetriever {
   public record Passage(
       String id,
       String sourceId,
@@ -52,24 +48,6 @@ public class HybridRetriever implements DocumentRetriever {
     this.diagnostics = diagnostics;
   }
 
-  /** 把本站检索结果转换成 Spring AI 的文档结构，保留记录及来源编号供上层追踪。 */
-  @Override
-  public List<Document> retrieve(Query query) {
-    return search(
-            MDC.get("requestId") == null ? UUID.randomUUID().toString() : MDC.get("requestId"),
-            db.setting("knowledge.active", ""),
-            query.text())
-        .passages()
-        .stream()
-        .map(
-            p ->
-                new Document(
-                    p.content(),
-                    Map.<String, Object>of(
-                        "recordId", p.id(), "sourceId", p.sourceId(), "kind", p.kind())))
-        .toList();
-  }
-
   /** 固定版本检索，分别排名后融合；向量分支失败只降级召回方式，不放宽事实核验。 */
   public Retrieved search(String requestId, String version, String question) {
     long started = System.nanoTime();
@@ -85,7 +63,7 @@ public class HybridRetriever implements DocumentRetriever {
       var matches =
           db.app()
               .queryForList(
-                  "SELECT r.* FROM records_fts JOIN release_records r ON r.row_id=records_fts.rowid JOIN candidates c ON c.id=r.record_id WHERE records_fts MATCH ? AND r.release_id=? AND r.kind!='STYLE' AND c.withdrawn=0 ORDER BY bm25(records_fts) LIMIT 24",
+                  "SELECT r.row_id,r.record_id,r.source_id,r.source_name,r.source_label,r.kind,r.mastery,r.content FROM records_fts JOIN release_records r ON r.row_id=records_fts.rowid JOIN candidates c ON c.id=r.record_id WHERE records_fts MATCH ? AND r.release_id=? AND r.kind!='STYLE' AND c.withdrawn=0 ORDER BY bm25(records_fts),r.row_id LIMIT 24",
                   query,
                   version);
       for (int i = 0; i < matches.size(); i++) {
@@ -109,27 +87,50 @@ public class HybridRetriever implements DocumentRetriever {
           vector = embedding.embed(requestId, question);
           queryCache.put(cacheKey, new CachedQuery(vector, System.currentTimeMillis() + 300_000));
         } else vector = cached.vector();
-        var all =
-            db.app()
-                .queryForList(
-                    "SELECT r.* FROM release_records r JOIN candidates c ON c.id=r.record_id WHERE r.release_id=? AND r.kind!='STYLE' AND c.withdrawn=0 AND r.embedding IS NOT NULL",
-                    version);
-        var scored = new ArrayList<Map.Entry<Map<String, Object>, Double>>();
-        for (var row : all) {
-          double similarity =
-              TextIndex.similarity(vector, TextIndex.decode((byte[]) row.get("embedding")));
-          // 独立向量召回先设相关度下限；该值是待真实资料评测校准的工程初值。
-          if (similarity >= 0.30) scored.add(Map.entry(row, similarity));
-        }
-        scored.sort(Map.Entry.<Map<String, Object>, Double>comparingByValue().reversed());
-        for (int i = 0; i < Math.min(24, scored.size()); i++) {
-          var row = scored.get(i).getKey();
-          long id = Database.number(row, "row_id");
-          rowsById.put(id, row);
-          ranks.merge(id, 1.0 / (60 + i + 1), Double::sum);
+        record Scored(long id, double score) {}
+        var best =
+            new PriorityQueue<Scored>(
+                Comparator.comparingDouble(Scored::score)
+                    .thenComparing(Comparator.comparingLong(Scored::id).reversed()));
+        float[] queryVector = vector;
+        db.app()
+            .query(
+                "SELECT r.row_id,r.embedding FROM release_records r JOIN candidates c ON c.id=r.record_id WHERE r.release_id=? AND r.kind!='STYLE' AND c.withdrawn=0 AND r.embedding IS NOT NULL",
+                (org.springframework.jdbc.core.RowCallbackHandler)
+                    row -> {
+                      cyou.jujube.common.RequestDeadline.check();
+                      double similarity =
+                          TextIndex.similarity(
+                              queryVector, TextIndex.decode(row.getBytes("embedding")));
+                      if (similarity >= 0.30) {
+                        best.add(new Scored(row.getLong("row_id"), similarity));
+                        if (best.size() > 24) best.poll();
+                      }
+                    },
+                version);
+        var scored =
+            best.stream()
+                .sorted(
+                    Comparator.comparingDouble(Scored::score)
+                        .reversed()
+                        .thenComparingLong(Scored::id))
+                .toList();
+        if (!scored.isEmpty()) {
+          String placeholders = String.join(",", Collections.nCopies(scored.size(), "?"));
+          var selectedRows =
+              db.app()
+                  .queryForList(
+                      "SELECT row_id,record_id,source_id,source_name,source_label,kind,mastery,content FROM release_records WHERE row_id IN ("
+                          + placeholders
+                          + ")",
+                      scored.stream().map(Scored::id).toArray());
+          for (var row : selectedRows) rowsById.put(Database.number(row, "row_id"), row);
+          for (int i = 0; i < scored.size(); i++)
+            ranks.merge(scored.get(i).id(), 1.0 / (60 + i + 1), Double::sum);
         }
         semantic = true;
       } catch (ApiException | IllegalArgumentException ex) {
+        if (ex instanceof ApiException api && "REQUEST_TIMEOUT".equals(api.code())) throw api;
         fallback = ex instanceof ApiException api ? api.code() : "INVALID_EMBEDDING";
         diagnostics.event(
             requestId,

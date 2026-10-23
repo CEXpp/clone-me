@@ -35,6 +35,18 @@ public final class Crypto {
     }
   }
 
+  public static String hash(java.nio.file.Path file) throws java.io.IOException {
+    try (var input = java.nio.file.Files.newInputStream(file)) {
+      var digest = MessageDigest.getInstance("SHA-256");
+      byte[] buffer = new byte[8192];
+      int read;
+      while ((read = input.read(buffer)) != -1) digest.update(buffer, 0, read);
+      return HexFormat.of().formatHex(digest.digest());
+    } catch (java.security.NoSuchAlgorithmException ex) {
+      throw new IllegalStateException(ex);
+    }
+  }
+
   /** 每次生成新的随机初始化向量，使用认证加密保护 TOTP 秘密；相同明文也不应生成相同密文。 */
   public static String encrypt(String value, String master) {
     try {

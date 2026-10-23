@@ -1,0 +1,12 @@
+# 首次签发阶段只开放 ACME，不通过 HTTP 提供登录或访客会话。
+server {
+    listen 80 default_server;
+    server_name _;
+    return 444;
+}
+server {
+    listen 80;
+    server_name ${CLONE_DOMAIN};
+    location ^~ /.well-known/acme-challenge/ { root /var/www/certbot; }
+    location / { return 503; }
+}

@@ -25,6 +25,11 @@ server:
     include-message: never
     include-stacktrace: never
   shutdown: graceful
+  tomcat:
+    max-connections: 128
+    accept-count: 32
+    connection-timeout: 10s
+spring.lifecycle.timeout-per-shutdown-phase: 90s
 # 文件使用结构化 JSON，控制台使用便于阅读的格式；两者都可通过请求编号关联阶段。
 logging:
   file:
@@ -45,6 +50,16 @@ logging:
     org.springframework.ai: WARN
 # 以下字段由 CloneProperties 接收；模型、端点、价格及数据路径集中配置。
 clone:
+  operations:
+    production: ${CLONE_PRODUCTION:false}
+    chat-enabled: ${CLONE_CHAT_ENABLED:true}
+    min-free-disk-mb: ${CLONE_MIN_FREE_DISK_MB:256}
+    max-sources: ${CLONE_MAX_SOURCES:200}
+    max-source-mb: ${CLONE_MAX_SOURCE_MB:200}
+    max-queued-jobs: ${CLONE_MAX_QUEUED_JOBS:32}
+    max-active-records: ${CLONE_MAX_ACTIVE_RECORDS:3000}
+    max-releases: ${CLONE_MAX_RELEASES:20}
+    max-database-mb: ${CLONE_MAX_DATABASE_MB:256}
   data-dir: ${CLONE_DATA_DIR:./data}
   secure-cookies: ${CLONE_SECURE_COOKIES:false}
   master-key: ${CLONE_MASTER_KEY:}

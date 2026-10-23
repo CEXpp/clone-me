@@ -3,6 +3,7 @@ package cyou.jujube.ai;
 import cyou.jujube.common.ApiException;
 import cyou.jujube.common.Diagnostics;
 import cyou.jujube.common.Json;
+import cyou.jujube.common.RequestDeadline;
 import cyou.jujube.config.CloneProperties;
 import cyou.jujube.quota.BudgetService;
 import java.net.URI;
@@ -41,6 +42,7 @@ public class SiliconFlowEmbedding implements EmbeddingProvider {
   /** 只允许已选定免费模型；校验响应数量、维度和有限数值后归一化，不能把无效向量写入索引。 */
   @Override
   public float[] embed(String requestId, String text) {
+    RequestDeadline.check();
     if (!configured()) throw ApiException.unavailable("EMBEDDING_NOT_CONFIGURED", "尚未配置向量模型");
     if (!"BAAI/bge-m3".equals(props.embeddingModel()))
       throw ApiException.unavailable("EMBEDDING_MODEL_NOT_APPROVED", "当前只允许已确认的免费 Embedding 模型");
@@ -51,7 +53,7 @@ public class SiliconFlowEmbedding implements EmbeddingProvider {
       var request =
           HttpRequest.newBuilder(
                   URI.create(props.embeddingUrl().replaceAll("/$", "") + "/embeddings"))
-              .timeout(Duration.ofSeconds(12))
+              .timeout(RequestDeadline.remaining(Duration.ofSeconds(12)))
               .header("Authorization", "Bearer " + props.embeddingKey())
               .header("Content-Type", "application/json")
               .POST(
@@ -68,7 +70,7 @@ public class SiliconFlowEmbedding implements EmbeddingProvider {
       var response = http.send(request, HttpResponse.BodyHandlers.ofString());
       if (response.statusCode() != 200)
         throw ApiException.unavailable("EMBEDDING_HTTP_" + response.statusCode(), "向量服务暂时不可用");
-      var root = Json.read(response.body());
+      var root = Json.model(response.body());
       var data = root.path("data");
       if (!data.isArray() || data.size() != 1 || data.get(0).path("index").asInt(0) != 0)
         throw new IllegalArgumentException("Invalid embedding envelope");

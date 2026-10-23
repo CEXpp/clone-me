@@ -25,6 +25,31 @@ public class VisitorSessions {
 
   public record Created(String token, String id, long expiresAt) {}
 
+  public long nextExpiry() {
+    return clock.millis() + LIFE;
+  }
+
+  public void verified(String id, String ip) {
+    db.sessions()
+        .update(
+            "UPDATE visitor_sessions SET verified_ip=?,verified_until=? WHERE id=?",
+            ip,
+            clock.millis() + 60_000,
+            id);
+  }
+
+  public boolean hasVerification(String token, String ip) {
+    var session = require(token);
+    return db.sessions()
+            .queryForObject(
+                "SELECT COUNT(*) FROM visitor_sessions WHERE id=? AND verified_ip=? AND verified_until>?",
+                Long.class,
+                session.get("id"),
+                ip,
+                clock.millis())
+        == 1;
+  }
+
   /** 生成不可预测的浏览器令牌，原文只返回给当前浏览器，数据库保留哈希和内部会话编号。 */
   public Created create() {
     String token = Crypto.token(), id = UUID.randomUUID().toString();
@@ -107,6 +132,15 @@ public class VisitorSessions {
   }
 
   public void save(String id, String question, String answer, Map<String, ?> metadata) {
+    save(id, question, answer, metadata, null);
+  }
+
+  public void save(
+      String id,
+      String question,
+      String answer,
+      Map<String, ?> metadata,
+      ChatService.Answer result) {
     long now = clock.millis();
     db.sessionTransaction(
         sql -> {
@@ -130,8 +164,58 @@ public class VisitorSessions {
               now,
               cyou.jujube.common.Json.write(metadata));
           sql.update("UPDATE visitor_sessions SET expires_at=? WHERE id=?", now + LIFE, id);
+          if (result != null)
+            sql.update(
+                "UPDATE chat_requests SET status='COMPLETED',response_json=? WHERE session_id=? AND request_id=? AND status='RUNNING'",
+                cyou.jujube.common.Json.write(result),
+                id,
+                result.requestId());
           return null;
         });
+  }
+
+  public ChatService.Answer result(String token, String requestKey) {
+    var session = require(token);
+    var row =
+        Database.required(
+            db.sessions(),
+            "SELECT status,response_json FROM chat_requests WHERE session_id=? AND request_key=?",
+            session.get("id"),
+            requestKey);
+    if (!"COMPLETED".equals(row.get("status")))
+      throw new ApiException(409, "REQUEST_UNCERTAIN", "请求仍在处理或结果不确定，请刷新聊天记录核对，勿重复付费提交");
+    return cyou.jujube.common.Json.decode(
+        Database.text(row, "response_json"), ChatService.Answer.class);
+  }
+
+  /** 在会话锁内注册请求键；已存在的键永不再次触发外部模型调用。 */
+  public void register(String sessionId, String key, String question, String requestId) {
+    String hash = Crypto.hash(question);
+    int added =
+        db.sessions()
+            .update(
+                "INSERT INTO chat_requests(session_id,request_key,question_hash,request_id,status,created_at) VALUES(?,?,?,?,'RUNNING',?) ON CONFLICT(session_id,request_key) DO UPDATE SET request_id=excluded.request_id,status='RUNNING',created_at=excluded.created_at WHERE chat_requests.status='FAILED' AND chat_requests.question_hash=excluded.question_hash",
+                sessionId,
+                key,
+                hash,
+                requestId,
+                clock.millis());
+    if (added == 0) throw new ApiException(409, "REQUEST_ALREADY_EXISTS", "该请求已提交，请先查询结果，勿重复提交");
+  }
+
+  public ChatService.Answer replay(String token, String key, String question) {
+    var session = require(token);
+    var rows =
+        db.sessions()
+            .queryForList(
+                "SELECT question_hash,status FROM chat_requests WHERE session_id=? AND request_key=?",
+                session.get("id"),
+                key);
+    if (rows.isEmpty()) return null;
+    if (!Crypto.hash(question).equals(rows.getFirst().get("question_hash")))
+      throw new ApiException(409, "REQUEST_KEY_REUSED", "请求编号已用于其他问题，请刷新后重试");
+    if ("FAILED".equals(rows.getFirst().get("status"))) return null;
+    return result(token, key);
   }
 
   /** 删除令牌对应会话，消息通过外键级联删除；不会触及其他访客或本人资料。 */

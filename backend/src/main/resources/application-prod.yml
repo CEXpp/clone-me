@@ -1,0 +1,18 @@
+# 仅由明确的生产部署启用；代理地址必须与 Compose 的专用 Nginx 地址一致。
+server:
+  address: 0.0.0.0
+  forward-headers-strategy: native
+  tomcat:
+    remoteip:
+      internal-proxies: '${CLONE_TRUSTED_PROXY_REGEX:172\.30\.23\.2}'
+      remote-ip-header: X-Forwarded-For
+      protocol-header: X-Forwarded-Proto
+clone:
+  data-dir: /data
+  secure-cookies: true
+  operations:
+    production: true
+    chat-enabled: ${CLONE_CHAT_ENABLED:false}
+logging:
+  file:
+    name: /data/logs/clone-me.jsonl
