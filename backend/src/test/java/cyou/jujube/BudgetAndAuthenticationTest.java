@@ -44,6 +44,23 @@ class BudgetAndAuthenticationTest {
   }
 
   @Test
+  void evaluationTotalLimitIncludesUncertainCostsAcrossMidnight() {
+    db.putSetting("ai.total-limit-micros", "100");
+    var before = new BudgetService(db, clock, props);
+    var first = before.require("first", "TEST", "fixture", "fixture", 80);
+    before.uncertain(first, "TIMEOUT", 1);
+    var after = new BudgetService(db, Clock.fixed(instant.plusSeconds(2), ZoneOffset.UTC), props);
+    assertEquals(
+        "RUN_BUDGET_REACHED",
+        assertThrows(
+                ApiException.class, () -> after.require("second", "TEST", "fixture", "fixture", 21))
+            .code());
+    assertNotNull(after.require("last", "TEST", "fixture", "fixture", 20));
+    assertNotNull(after.require("free", "TEST", "fixture", "fixture", 0));
+    assertEquals(3, db.app().queryForObject("SELECT COUNT(*) FROM ai_calls", Integer.class));
+  }
+
+  @Test
   void legacyConversationSchemaIsUpgradedWithoutLosingMessages() throws Exception {
     var visitors = new cyou.jujube.conversation.VisitorSessions(db, clock);
     var visitor = visitors.create();

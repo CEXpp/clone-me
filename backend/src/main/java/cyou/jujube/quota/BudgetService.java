@@ -66,6 +66,16 @@ public class BudgetService {
         day = LocalDate.now(clock.withZone(ZoneId.of("Asia/Shanghai"))).toString();
     return db.transaction(
         sql -> {
+          // 隔离评测可额外设置整轮额度，跨北京时间零点也不重置；生产默认无此设置。
+          String totalLimit = db.setting("ai.total-limit-micros", "");
+          if (!totalLimit.isBlank() && maximum > 0) {
+            long used =
+                sql.queryForObject(
+                    "SELECT COALESCE(SUM(CASE WHEN status='SETTLED' THEN actual ELSE reserved END),0) FROM ai_calls",
+                    Long.class);
+            if (used + maximum > Long.parseLong(totalLimit))
+              throw new ApiException(429, "RUN_BUDGET_REACHED", "本轮评测额度不足，已停止新的付费调用");
+          }
           sql.update("INSERT OR IGNORE INTO budget_days(day) VALUES(?)", day);
           int updated =
               sql.update(

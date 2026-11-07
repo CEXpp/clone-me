@@ -17,6 +17,16 @@ import org.springframework.boot.context.properties.EnableConfigurationProperties
 public class CloneMeApplication {
   /** 根据命令行选择运行模式。主密钥命令立即返回；初始化模式不监听端口，完成后关闭上下文。 */
   public static void main(String[] args) {
+    if (java.util.Arrays.asList(args).contains("--evaluate-rag")) {
+      if (args.length != 2 || !args[0].equals("--evaluate-rag"))
+        throw new IllegalArgumentException("Use --evaluate-rag <isolated-run.json>");
+      try {
+        cyou.jujube.evaluation.EvaluationCommand.run(java.nio.file.Path.of(args[1]));
+        return;
+      } catch (Exception ex) {
+        throw new IllegalStateException("Local evaluation failed", ex);
+      }
+    }
     // 学习入口：JVM 先调用 main，SpringApplication.run 才创建并连接各业务对象。
     // 离线命令提前 return，就不会误启动 HTTP 服务或后台定时任务。
     if ((java.util.Arrays.asList(args).contains("--healthcheck") && args.length != 1)

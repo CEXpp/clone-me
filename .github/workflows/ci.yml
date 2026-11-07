@@ -47,6 +47,10 @@ jobs:
       - name: Test and package application
         working-directory: backend
         run: mvn -B -ntp verify
+      - name: Test offline evaluation metrics and snapshot isolation
+        run: python3 -m unittest discover -s scripts -p 'test_*eval*.py' -v
+      - name: Run fictional RAG evaluation without model calls
+        run: python3 scripts/evaluate.py --demo --output .cache/ci-evaluation
       - name: Check runtime dependency vulnerabilities
         working-directory: frontend
         run: |

@@ -134,7 +134,7 @@ public class NoteIndex {
   private record IndexedChild(
       String parent, String kind, String content, String context, byte[] vector) {}
 
-  private String fingerprint() {
+  public String fingerprint() {
     return StructuredChunks.VERSION
         + "|"
         + (embedding.configured() ? embedding.fingerprint() : "lexical");
@@ -149,26 +149,45 @@ public class NoteIndex {
         > 0;
   }
 
+  public record SearchOptions(boolean semantic, boolean rerank) {
+    public static final SearchOptions DEFAULT = new SearchOptions(true, true);
+  }
+
   public HybridRetriever.Retrieved search(String request, String question) {
+    return search(request, question, SearchOptions.DEFAULT, null);
+  }
+
+  public HybridRetriever.Retrieved search(
+      String request, String question, SearchOptions options, RetrievalTrace trace) {
     RequestDeadline.check();
+    if (trace != null) trace.query(question);
     var rows =
         db.app()
             .queryForList(
                 "SELECT c.*,n.title,p.heading_path,p.content AS parent_content,b.name AS notebook,s.name AS section FROM note_chunks c JOIN notes n ON n.id=c.note_id LEFT JOIN note_chunk_parents p ON p.id=c.parent_id JOIN note_sections s ON s.id=n.section_id JOIN notebooks b ON b.id=s.notebook_id WHERE n.knowledge=1 AND n.deleted=0");
+    var byId = new HashMap<String, Map<String, Object>>();
+    rows.forEach(r -> byId.put(Database.text(r, "id"), r));
+    var lexicalIds = new ArrayList<String>();
+    var semanticIds = new ArrayList<String>();
     var ranks = new HashMap<String, Double>();
     String query = TextIndex.query(question);
     if (!query.isBlank()) {
       var matches =
           db.app()
               .queryForList(
-                  "SELECT f.chunk_id FROM notes_fts f JOIN note_chunks c ON c.id=f.chunk_id JOIN notes n ON n.id=c.note_id WHERE notes_fts MATCH ? AND n.knowledge=1 AND n.deleted=0 ORDER BY bm25(notes_fts) LIMIT 40",
+                  "SELECT f.chunk_id FROM notes_fts f JOIN note_chunks c ON c.id=f.chunk_id JOIN notes n ON n.id=c.note_id WHERE notes_fts MATCH ? AND n.knowledge=1 AND n.deleted=0 ORDER BY bm25(notes_fts),n.id,c.ordinal LIMIT 40",
                   query);
-      for (int i = 0; i < matches.size(); i++)
-        ranks.merge(Database.text(matches.get(i), "chunk_id"), 1.0 / (61 + i), Double::sum);
+      for (var match : matches) {
+        String id = Database.text(match, "chunk_id");
+        if (byId.containsKey(id)) lexicalIds.add(id);
+      }
+      for (int i = 0; i < lexicalIds.size(); i++)
+        ranks.merge(lexicalIds.get(i), 1.0 / (61 + i), Double::sum);
     }
     boolean semantic = false;
     String fallback = "";
-    if (embedding.configured())
+    if (trace != null) trace.record("lexical", hits(lexicalIds, byId, ranks));
+    if (options.semantic() && embedding.configured())
       try {
         float[] vector = embedding.embed(request, question);
         var scored =
@@ -185,30 +204,39 @@ public class NoteIndex {
                             TextIndex.similarity(
                                 vector, TextIndex.decode((byte[]) r.get("embedding")))))
                 .filter(e -> e.getValue() >= 0.30)
-                .sorted(Map.Entry.<String, Double>comparingByValue().reversed())
+                .sorted(
+                    Map.Entry.<String, Double>comparingByValue()
+                        .reversed()
+                        .thenComparing(e -> Database.text(byId.get(e.getKey()), "note_id"))
+                        .thenComparingLong(e -> Database.number(byId.get(e.getKey()), "ordinal")))
                 .limit(40)
                 .toList();
-        for (int i = 0; i < scored.size(); i++)
+        for (int i = 0; i < scored.size(); i++) {
+          semanticIds.add(scored.get(i).getKey());
           ranks.merge(scored.get(i).getKey(), 1.0 / (61 + i), Double::sum);
+        }
         semantic = true;
       } catch (ApiException ex) {
-        if (Set.of("DAILY_BUDGET_REACHED", "REQUEST_TIMEOUT").contains(ex.code())) throw ex;
+        if (Set.of("DAILY_BUDGET_REACHED", "RUN_BUDGET_REACHED", "REQUEST_TIMEOUT")
+            .contains(ex.code())) throw ex;
         fallback = ex.code();
       }
-    var byId = new HashMap<String, Map<String, Object>>();
-    rows.forEach(r -> byId.put(Database.text(r, "id"), r));
+    if (trace != null) trace.record("semantic", hits(semanticIds, byId, ranks));
     var selected =
         ranks.entrySet().stream()
+            .filter(e -> byId.containsKey(e.getKey()))
             .sorted(
                 Map.Entry.<String, Double>comparingByValue()
                     .reversed()
-                    .thenComparing(Map.Entry::getKey))
+                    .thenComparing(e -> Database.text(byId.get(e.getKey()), "note_id"))
+                    .thenComparingLong(e -> Database.number(byId.get(e.getKey()), "ordinal")))
             .map(Map.Entry::getKey)
             .filter(byId::containsKey)
             .limit(30)
             .toList();
+    if (trace != null) trace.record("fused", hits(selected, byId, ranks));
     var relevance = new HashMap<String, Double>();
-    if (!selected.isEmpty()) {
+    if (options.rerank() && !selected.isEmpty()) {
       if (reranker == null || !reranker.configured())
         fallback = reason(fallback, "RERANK_NOT_CONFIGURED");
       else
@@ -239,7 +267,8 @@ public class NoteIndex {
           }
           selected = List.copyOf(validated);
         } catch (ApiException ex) {
-          if (Set.of("DAILY_BUDGET_REACHED", "REQUEST_TIMEOUT").contains(ex.code())) throw ex;
+          if (Set.of("DAILY_BUDGET_REACHED", "RUN_BUDGET_REACHED", "REQUEST_TIMEOUT")
+              .contains(ex.code())) throw ex;
           relevance.clear();
           fallback = reason(fallback, ex.code());
         } catch (IllegalArgumentException ex) {
@@ -247,6 +276,8 @@ public class NoteIndex {
           fallback = reason(fallback, "RERANK_INVALID_RESPONSE");
         }
     }
+    if (trace != null)
+      trace.record("reranked", hits(selected, byId, relevance.isEmpty() ? ranks : relevance));
     var passages = new ArrayList<HybridRetriever.Passage>();
     var covered = new HashSet<String>();
     for (String id : selected) {
@@ -279,8 +310,44 @@ public class NoteIndex {
               content,
               relevance.getOrDefault(id, ranks.get(id))));
     }
+    if (trace != null)
+      trace.record(
+          "selected",
+          passages.stream()
+              .map(
+                  p -> {
+                    var r = byId.get(p.id());
+                    return new RetrievalTrace.Hit(
+                        p.id(),
+                        p.sourceId(),
+                        Database.number(r, "revision"),
+                        Database.text(r, "heading_path"),
+                        p.content(),
+                        p.score(),
+                        Database.number(r, "ordinal"));
+                  })
+              .toList());
+    if (trace != null) trace.result(semantic, fallback);
     RequestDeadline.check();
     return new HybridRetriever.Retrieved("notes", passages, semantic, fallback);
+  }
+
+  private static List<RetrievalTrace.Hit> hits(
+      List<String> ids, Map<String, Map<String, Object>> rows, Map<String, Double> scores) {
+    return ids.stream()
+        .map(
+            id -> {
+              var r = rows.get(id);
+              return new RetrievalTrace.Hit(
+                  id,
+                  Database.text(r, "note_id"),
+                  Database.number(r, "revision"),
+                  Database.text(r, "heading_path"),
+                  Database.text(r, "content"),
+                  scores.getOrDefault(id, 0.0),
+                  Database.number(r, "ordinal"));
+            })
+        .toList();
   }
 
   private static String reason(String previous, String next) {

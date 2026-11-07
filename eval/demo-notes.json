@@ -1,0 +1,127 @@
+[
+  {
+    "id": "demo-index",
+    "title": "数据库索引入门",
+    "knowledge": true,
+    "body": {
+      "type": "doc",
+      "content": [
+        {
+          "type": "heading",
+          "content": [
+            {
+              "type": "text",
+              "text": "索引"
+            }
+          ],
+          "attrs": {
+            "level": 1
+          }
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "B 树索引用于加速按索引列查找数据。索引会占用额外存储，也会增加写入维护成本。"
+            }
+          ]
+        },
+        {
+          "type": "heading",
+          "content": [
+            {
+              "type": "text",
+              "text": "建索引代码"
+            }
+          ],
+          "attrs": {
+            "level": 1
+          }
+        },
+        {
+          "type": "codeBlock",
+          "content": [
+            {
+              "type": "text",
+              "text": "CREATE INDEX idx_email ON users(email);"
+            }
+          ],
+          "attrs": {
+            "language": "sql"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "id": "demo-transaction",
+    "title": "数据库事务",
+    "knowledge": true,
+    "body": {
+      "type": "doc",
+      "content": [
+        {
+          "type": "heading",
+          "content": [
+            {
+              "type": "text",
+              "text": "原子性"
+            }
+          ],
+          "attrs": {
+            "level": 1
+          }
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "事务的原子性表示事务中的操作要么全部成功，要么全部回滚。"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "id": "demo-private",
+    "title": "私人演示备忘",
+    "knowledge": false,
+    "body": {
+      "type": "doc",
+      "content": [
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "演示口令是虚构的 PEAR-42，不是真实凭据。"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "id": "demo-deleted",
+    "title": "已删除的演示页面",
+    "knowledge": true,
+    "deleted": true,
+    "body": {
+      "type": "doc",
+      "content": [
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "type": "text",
+              "text": "被删除页面的演示标识为 OLD-PAGE-17。"
+            }
+          ]
+        }
+      ]
+    }
+  }
+]

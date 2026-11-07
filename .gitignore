@@ -43,3 +43,8 @@ eval/private/
 # 文档仅在本机整理；已有受跟踪文档也须在提交时显式排除。
 docs/
 **/previews/
+
+# 本地评测产物与 Python 缓存
+eval/runs/
+__pycache__/
+*.pyc

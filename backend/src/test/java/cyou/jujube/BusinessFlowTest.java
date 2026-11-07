@@ -149,6 +149,72 @@ class BusinessFlowTest {
   }
 
   @Test
+  void offlineAnswerEvaluationRunsDialogueAndRecordsCitedEvidence() throws Exception {
+    String chunk = seedNote();
+    var runner = new cyou.jujube.evaluation.EvaluationRunner(db, noteIndex, chat, sessions);
+    var config =
+        Json.read(
+            Json.write(
+                Map.of(
+                    "mode",
+                    "answer",
+                    "variants",
+                    List.of("no-rerank"),
+                    "cases",
+                    List.of(
+                        Map.of(
+                            "id",
+                            "dialogue-fixture",
+                            "question",
+                            "那它用什么实现的？",
+                            "dialogue",
+                            List.of("Java 项目做了什么？"))))));
+    Path output = ROOT.resolve("evaluation-" + UUID.randomUUID() + ".jsonl");
+    runner.run(config, output);
+    var row = Json.read(Files.readString(output));
+    assertFalse(row.has("error"));
+    assertEquals("ANSWERED", row.path("answer").path("status").asText());
+    assertEquals(1, row.path("dialogue").size());
+    assertTrue(row.path("query").asText().contains("Java 项目做了什么"));
+    assertEquals(chunk, row.path("stages").path("cited").get(0).path("id").asText());
+    assertEquals(
+        0, db.sessions().queryForObject("SELECT COUNT(*) FROM visitor_sessions", Integer.class));
+  }
+
+  @Test
+  void evaluationObservesTheSameEvidenceSentThroughProductionAnswerChecks() throws Exception {
+    String chunk = seedNote();
+    var visitor = sessions.create();
+    var trace = new cyou.jujube.notes.RetrievalTrace();
+    var answer =
+        chat.ask(
+            "evaluation-fixture",
+            visitor.token(),
+            "fixture-ip",
+            "Java 项目",
+            UUID.randomUUID().toString(),
+            cyou.jujube.notes.NoteIndex.SearchOptions.DEFAULT,
+            trace);
+    assertEquals("ANSWERED", answer.status());
+    assertTrue(trace.stages().get("context").stream().anyMatch(hit -> hit.id().equals(chunk)));
+    assertFalse(Json.write(answer).contains("stages"));
+    decision.insufficient = true;
+    var denied = new cyou.jujube.notes.RetrievalTrace();
+    assertEquals(
+        "INSUFFICIENT_EVIDENCE",
+        chat.ask(
+                "evaluation-denied",
+                sessions.create().token(),
+                "fixture-ip2",
+                "Java 项目",
+                UUID.randomUUID().toString(),
+                cyou.jujube.notes.NoteIndex.SearchOptions.DEFAULT,
+                denied)
+            .status());
+    assertFalse(denied.stages().containsKey("context"));
+  }
+
+  @Test
   void uploadApprovePublishAnswerAndIsolateVisitors() throws Exception {
     String record = seedNote();
     var alice = sessions.create();
