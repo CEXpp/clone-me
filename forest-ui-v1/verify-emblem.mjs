@@ -1,0 +1,26 @@
+import { chromium } from '@playwright/test';
+import { mkdir } from 'node:fs/promises';
+const browser=await chromium.launch({channel:'msedge',headless:true});
+const page=await browser.newPage({viewport:{width:1440,height:900}});
+await mkdir('previews/emblem',{recursive:true});
+await page.goto('http://127.0.0.1:5174/');
+await page.locator('.heart-emblem').waitFor();
+await page.waitForTimeout(250);
+const running=await page.locator('.emblem-stream').evaluate(e=>getComputedStyle(e).strokeDashoffset);
+await page.waitForTimeout(350);
+const moved=await page.locator('.emblem-stream').evaluate(e=>getComputedStyle(e).strokeDashoffset);
+if(running===moved)throw new Error('Stream is not moving');
+await page.locator('.logo').screenshot({path:'previews/emblem/header-brand.png'});
+await page.screenshot({path:'previews/emblem/desktop.png',fullPage:true});
+await page.getByRole('button',{name:'暂停背景动画'}).click();
+if(!(await page.locator('.emblem-stream').evaluate(e=>getComputedStyle(e).animationName)==='none'))throw new Error('Pause does not affect emblem');
+await page.getByRole('button',{name:'开启背景动画'}).click();
+await page.emulateMedia({reducedMotion:'reduce'});
+if(!(await page.locator('.emblem-stream').evaluate(e=>getComputedStyle(e).animationName)==='none'))throw new Error('Reduced motion does not affect emblem');
+for(const width of [375,768]){await page.setViewportSize({width,height:812});await page.waitForTimeout(100);if(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth))throw new Error('Overflow at '+width);}
+await page.setViewportSize({width:375,height:812});await page.screenshot({path:'previews/emblem/mobile.png',fullPage:true});
+const favicon=await page.locator('link[rel=icon]').getAttribute('href');
+const response=await page.request.get('http://127.0.0.1:5174'+favicon);
+if(!response.ok()||!(await response.text()).includes('heart-ribbon'))throw new Error('Favicon is stale');
+console.log('PASS: visible stream animation, global pause, reduced motion, responsive header and matching favicon.');
+await browser.close();

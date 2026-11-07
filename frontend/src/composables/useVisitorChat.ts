@@ -1,3 +1,4 @@
+import { debugFlow } from "../debug";
 import { computed, nextTick, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { api, ApiError } from "../api";
@@ -6,6 +7,8 @@ import type { Message, VisitorSession, Answer } from "../types";
 
 /** 会话恢复、唯一请求键与错误恢复；只自动查询结果，不自动重放付费写请求。 */
 export function useVisitorChat() {
+  // composable 是把一组响应式状态和操作封装成函数；PublicPage 取返回值负责渲染。
+  // ref 在脚本中用 .value，Vue 模板会自动解包，因此模板里通常直接写 input、busy。
   const route = useRoute(),
     router = useRouter();
   const input = ref(""),
@@ -24,6 +27,7 @@ export function useVisitorChat() {
     challengeToken = ref(""),
     siteKey = ref("");
   const submission = ref<{ question: string; key: string } | null>(null);
+  // submission 保存同一问题的请求键；requestId 则由后端为每次 HTTP 请求新建。
   const composer = ref<HTMLTextAreaElement>(),
     bottom = ref<HTMLElement>();
   const section = computed(() =>
@@ -51,14 +55,19 @@ export function useVisitorChat() {
   }
   /** 只恢复当前浏览器 Cookie 对应会话；401 表示无有效会话，网络故障则保留可重试提示。 */
   async function recover() {
+    debugFlow("CHAT", "尝试恢复当前浏览器的访客会话");
     recovering.value = true;
     error.value = "";
     try {
       const value = await api<VisitorSession>("/api/public/session");
       session.value = value;
       messages.value = Array.isArray(value.messages) ? value.messages : [];
+      debugFlow("CHAT", "会话恢复成功", {
+        messageCount: messages.value.length,
+      });
     } catch (e) {
       if (e instanceof ApiError && e.status === 401) {
+        debugFlow("CHAT", "没有有效访客会话，首次提问时再创建");
         session.value = null;
         messages.value = [];
       } else error.value = errorText(e);
@@ -68,13 +77,16 @@ export function useVisitorChat() {
     }
   }
   async function begin() {
+    // 首次发送前才创建访客会话；凭证由 Set-Cookie 保存，前端只拿到非秘密的会话信息。
     if (session.value) return;
+    debugFlow("CHAT", "首次提问，开始创建访客会话");
     session.value = await api<VisitorSession>("/api/public/session", "POST", {
       challengeToken: challengeToken.value || undefined,
     });
     challengeToken.value = "";
   }
   async function scroll() {
+    // nextTick 等待 Vue 把状态变化更新到 DOM，之后滚动才会对准刚出现的新消息。
     await nextTick();
     bottom.value?.scrollIntoView({
       block: "nearest",
@@ -88,6 +100,7 @@ export function useVisitorChat() {
     const question = input.value.trim();
     if (!question || question.length > 2000 || busy.value || checking.value)
       return;
+    debugFlow("CHAT", "问题通过本地检查，进入等待状态；不打印问题内容");
     busy.value = true;
     pending.value = question;
     error.value = "";
@@ -96,8 +109,10 @@ export function useVisitorChat() {
       await begin();
       if (submission.value?.question !== question)
         submission.value = { question, key: crypto.randomUUID() };
+      // 未确认结果前保留这个键。用户主动再提交相同问题时，后端可返回已完成结果。
       let answer: Answer;
       try {
+        debugFlow("CHAT", "发送问答请求，等待后端完成生成和核验");
         answer = await api<Answer>("/api/public/chat", "POST", {
           message: question,
           requestKey: submission.value.key,
@@ -115,15 +130,23 @@ export function useVisitorChat() {
         )
           throw error;
         try {
+          debugFlow("CHAT", "提交结果不确定，发起一次只读结果查询");
           answer = await api<Answer>(
+            // 写请求异常后这里只做一次只读查询；没有循环重发 POST，也没有定时轮询结果。
             "/api/public/requests/" + encodeURIComponent(submission.value.key),
           );
         } catch {
           throw error;
         }
       }
+      debugFlow("CHAT", "已取得最终结果，准备插入消息并更新界面", {
+        requestId: answer.requestId,
+        status: answer.status,
+        sourceCount: answer.sources.length,
+      });
       submission.value = null;
       messages.value.push(
+        // 后端返回最终核验结果后再成对插入消息，pending 只负责等待期间的临时问题显示。
         { role: "user", content: question },
         {
           role: "assistant",
@@ -147,6 +170,7 @@ export function useVisitorChat() {
           session.value = null;
       }
     } finally {
+      debugFlow("CHAT", "本次发送流程结束，解除等待状态并清理临时验证码");
       busy.value = false;
       pending.value = "";
       challengeToken.value = "";
@@ -157,6 +181,7 @@ export function useVisitorChat() {
   async function clear() {
     if (busy.value) return;
     try {
+      debugFlow("CHAT", "开始清除当前浏览器会话");
       await api("/api/public/session", "DELETE");
       session.value = null;
       submission.value = null;
@@ -198,6 +223,7 @@ export function useVisitorChat() {
     }
   }
   onMounted(async () => {
+    // 三个读取互不依赖；allSettled 允许某项失败后其他项仍完成，各自处理自己的提示。
     await Promise.allSettled([
       refreshProfile(),
       recover(),

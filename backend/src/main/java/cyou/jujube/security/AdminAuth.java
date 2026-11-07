@@ -1,6 +1,7 @@
 package cyou.jujube.security;
 
 import cyou.jujube.common.ApiException;
+import cyou.jujube.common.FlowLog;
 import cyou.jujube.config.CloneProperties;
 import cyou.jujube.quota.RateLimits;
 import cyou.jujube.storage.Database;
@@ -55,6 +56,8 @@ public class AdminAuth {
     if (db.app().queryForObject("SELECT COUNT(*) FROM admin_account", Long.class) > 0)
       throw new ApiException(409, "ADMIN_EXISTS", "管理员已初始化");
     String secret = Totp.newSecret(), encrypted = Crypto.encrypt(secret, props.masterKey());
+    // 密码只需校验，所以保存 BCrypt 哈希；TOTP 计算需还原秘密，所以保存主密钥加密的密文。
+    // 哈希和加密用途不同，不能将“可解密找回密码”作为这里的登录设计。
     List<String> recovery = new ArrayList<>();
     for (int i = 0; i < 8; i++) recovery.add(Crypto.token().substring(0, 20));
     db.transaction(
@@ -73,6 +76,7 @@ public class AdminAuth {
 
   /** 先限流再验证密码和第二因素；验证码时间步或恢复码只能成功消费一次，再签发随机会话。 */
   public synchronized String login(String username, String password, String code, String ipHash) {
+    FlowLog.step("LOGIN", "开始登录：先限流，再验证密码与第二因素；不记录账号及凭证", Map.of());
     limits.require("login", ipHash, 8, Duration.ofMinutes(15).toMillis());
     var rows = db.app().queryForList("SELECT * FROM admin_account WHERE id=1");
     if (rows.isEmpty()) throw ApiException.unavailable("ADMIN_NOT_INITIALIZED", "管理员尚未初始化");
@@ -80,6 +84,7 @@ public class AdminAuth {
     if (!Database.text(account, "username").equals(username)
         || password == null
         || !passwords.matches(password, Database.text(account, "password_hash"))) throw denied();
+    FlowLog.step("LOGIN", "密码验证通过，开始验证并消费第二因素", Map.of());
     boolean valid = false;
     if (code != null && code.matches("\\d{6}")) {
       long step =
@@ -104,11 +109,13 @@ public class AdminAuth {
               == 1;
     if (!valid) throw denied();
     String token = Crypto.token();
+    // 登录成功签发八小时随机凭证；浏览器保存原文 Cookie，服务端只保存哈希及失效时间。
     db.app()
         .update(
             "INSERT INTO admin_sessions(token_hash,expires_at) VALUES(?,?)",
             Crypto.hash(token),
             clock.millis() + Duration.ofHours(8).toMillis());
+    FlowLog.step("LOGIN", "管理员会话已签发并保存哈希，凭证内容不打印", Map.of());
     return token;
   }
 
@@ -130,6 +137,7 @@ public class AdminAuth {
   }
 
   private ApiException denied() {
+    FlowLog.step("LOGIN", "登录验证未通过，本次不签发会话", Map.of());
     return new ApiException(401, "INVALID_CREDENTIALS", "登录信息或动态验证码无效");
   }
 }

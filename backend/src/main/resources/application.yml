@@ -32,6 +32,10 @@ server:
 spring.lifecycle.timeout-per-shutdown-phase: 90s
 # 文件使用结构化 JSON，控制台使用便于阅读的格式；两者都可通过请求编号关联阶段。
 logging:
+  # 明确使用 UTF-8，避免 Windows 终端与日志文件采用不同编码导致中文乱码。
+  charset:
+    console: UTF-8
+    file: UTF-8
   file:
     name: ${CLONE_LOG_FILE:./logs/clone-me.jsonl}
   structured:
@@ -47,9 +51,16 @@ logging:
     console: "%d{HH:mm:ss.SSS} %-5level [%X{requestId:-startup}] %logger{32} - %msg%n"
   level:
     cyou.jujube: INFO
+    # 只开启本项目的教学流程日志，不开启 JDBC/HTTP 调试，避免打印 SQL 参数和请求正文。
+    cyou.jujube.common.FlowLog: ${CLONE_FLOW_LOG_LEVEL:TRACE}
     org.springframework.ai: WARN
 # 以下字段由 CloneProperties 接收；模型、端点、价格及数据路径集中配置。
 clone:
+  rerank:
+    key: ${RERANK_API_KEY:${SILICONFLOW_API_KEY:}}
+    url: ${RERANK_BASE_URL:${SILICONFLOW_BASE_URL:https://api.siliconflow.cn/v1}}
+    model: ${RERANK_MODEL:BAAI/bge-reranker-v2-m3}
+    input-cny-per-million: ${RERANK_INPUT_CNY_PER_MILLION:-1}
   operations:
     production: ${CLONE_PRODUCTION:false}
     chat-enabled: ${CLONE_CHAT_ENABLED:true}
@@ -71,7 +82,7 @@ clone:
   deepseek-output-cny-per-million: ${DEEPSEEK_OUTPUT_CNY_PER_MILLION:-1}
   embedding-key: ${SILICONFLOW_API_KEY:}
   embedding-url: ${SILICONFLOW_BASE_URL:https://api.siliconflow.cn/v1}
-  # 免费模型名称固定；端点或模型指纹变化需要重建发布版本。
+  # 免费模型名称固定；端点或模型指纹变化会自动重建已共享笔记索引。
   embedding-model: BAAI/bge-m3
   decision-provider: ${DECISION_PROVIDER:disabled}
   typesafe-key: ${TYPESAFE_API_KEY:}

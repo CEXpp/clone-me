@@ -2,6 +2,8 @@
  * 统一的同源 API 请求层，负责防伪令牌、错误码、登录过期事件和备份下载。
  * 写请求不自动重试：网络断开时后端可能已经执行，重发可能重复扣费或修改资料。
  */
+import { debugFlow, debugPath } from "./debug";
+
 export class ApiError extends Error {
   constructor(
     public status: number,
@@ -14,15 +16,48 @@ export class ApiError extends Error {
 }
 let csrf: { token: string; headerName: string } | undefined;
 let csrfPending: Promise<void> | undefined;
+let fetchSequence = 0;
 async function timedFetch(
   path: string,
   options: RequestInit,
   timeout = 90_000,
 ) {
+  // 每次实际 fetch 分配浏览器本地序号；收到响应后再打印后端 requestId，方便对照终端。
+  const localId = ++fetchSequence;
+  const started = performance.now();
+  const method = options.method || "GET";
+  debugFlow("HTTP", "开始请求", {
+    localId,
+    method,
+    path: debugPath(path),
+    timeoutMs: timeout,
+  });
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeout);
+  // 超时只中止浏览器等待，不能保证后端或供应商已停止执行，所以写请求不能直接自动重试。
+  const timer = setTimeout(() => {
+    debugFlow("HTTP", "等待超时，中止浏览器等待；后端可能仍在处理", {
+      localId,
+    });
+    controller.abort();
+  }, timeout);
   try {
-    return await fetch(path, { ...options, signal: controller.signal });
+    const response = await fetch(path, {
+      ...options,
+      signal: controller.signal,
+    });
+    debugFlow("HTTP", "收到响应头，接下来读取响应内容", {
+      localId,
+      status: response.status,
+      requestId: response.headers.get("X-Request-Id") || "",
+      durationMs: Math.round(performance.now() - started),
+    });
+    return response;
+  } catch (error) {
+    debugFlow("HTTP", "请求未取得响应，请查看网络状态或超时日志", {
+      localId,
+      durationMs: Math.round(performance.now() - started),
+    });
+    throw error;
   } finally {
     clearTimeout(timer);
   }
@@ -32,7 +67,11 @@ export function resetCsrf() {
 }
 /** 共享正在获取令牌的 Promise，合并并发准备请求；完成后释放，下次写入仍重新获取当前令牌。 */
 export async function refreshCsrf() {
-  if (csrfPending) return csrfPending;
+  if (csrfPending) {
+    debugFlow("CSRF", "已有令牌请求进行中，共用它的 Promise");
+    return csrfPending;
+  }
+  debugFlow("CSRF", "开始获取写操作所需的防伪令牌；令牌内容不打印");
   csrfPending = (async () => {
     const res = await timedFetch(
       "/api/auth/csrf",
@@ -66,6 +105,7 @@ export async function refreshCsrf() {
         "安全令牌无效，请刷新页面后重试",
       );
     csrf = { token: value.token, headerName: value.headerName };
+    debugFlow("CSRF", "防伪令牌格式校验通过，可以继续写请求");
   })().finally(() => {
     csrfPending = undefined;
   });
@@ -76,6 +116,7 @@ export async function api<T = unknown>(
   method = "GET",
   body?: unknown,
 ): Promise<T> {
+  // T 只供 TypeScript 编译时检查；as T 不会在运行时验证服务器 JSON 的每个字段。
   const headers = new Headers();
   const write = !["GET", "HEAD"].includes(method);
   if (write) {
@@ -85,6 +126,7 @@ export async function api<T = unknown>(
     headers.set(csrf!.headerName, csrf!.token);
   }
   const multipart = body instanceof FormData;
+  // FormData 让浏览器自动设置含 boundary 的 Content-Type；手工填 JSON 头会破坏文件上传。
   if (body !== undefined && !multipart)
     headers.set("Content-Type", "application/json");
   let response: Response;
@@ -109,11 +151,17 @@ export async function api<T = unknown>(
     );
   }
   const value: unknown = await response.json().catch(() => ({}));
+  // fetch 在 HTTP 400/500 时通常仍返回 Response；须检查 ok，不能只依靠 catch 判断业务成功。
   const failure =
     typeof value === "object" && value !== null
       ? (value as Record<string, unknown>)
       : {};
   if (!response.ok) {
+    debugFlow("API", "接口返回失败，准备转换成 ApiError", {
+      path: debugPath(path),
+      status: response.status,
+      requestId: response.headers.get("X-Request-Id") || "",
+    });
     if (response.status === 401 && path.startsWith("/api/admin/"))
       window.dispatchEvent(new Event("admin-session-expired"));
     if (response.status === 403 && failure.code === "ACCESS_DENIED")
@@ -129,10 +177,15 @@ export async function api<T = unknown>(
         : response.headers.get("X-Request-Id") || "",
     );
   }
+  debugFlow("API", "响应内容读取完成，交给页面更新状态", {
+    path: debugPath(path),
+    requestId: response.headers.get("X-Request-Id") || "",
+  });
   return value as T;
 }
 /** 通过认证请求取二进制文件，临时对象地址只用于当前浏览器下载，使用后及时释放。 */
 export async function downloadBackup(name: string) {
+  debugFlow("BACKUP", "开始下载备份；不打印备份名称及内容");
   const response = await fetch(
     "/api/admin/backups/" + encodeURIComponent(name),
     { credentials: "same-origin", cache: "no-store" },
@@ -151,5 +204,6 @@ export async function downloadBackup(name: string) {
   a.href = url;
   a.download = name;
   a.click();
+  debugFlow("BACKUP", "文件已读取并触发浏览器下载，稍后释放临时对象地址");
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }

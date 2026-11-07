@@ -36,6 +36,10 @@ dist/
 deploy/.release.env*
 deploy/.previous.env
 deploy/.images.env*
-frontend/test-results/
-frontend/playwright-report/
+**/test-results/
+**/playwright-report/
 eval/private/
+
+# 文档仅在本机整理；已有受跟踪文档也须在提交时显式排除。
+docs/
+**/previews/

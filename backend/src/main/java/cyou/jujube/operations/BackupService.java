@@ -1,6 +1,7 @@
 package cyou.jujube.operations;
 
 import cyou.jujube.common.ApiException;
+import cyou.jujube.common.FlowLog;
 import cyou.jujube.common.Json;
 import cyou.jujube.config.CloneProperties;
 import cyou.jujube.config.RuntimeConfig;
@@ -57,6 +58,7 @@ public class BackupService {
 
   /** 生成一致性副本、删除副本里的认证信息、压缩本人资料，再轮转旧备份；失败时清理本次半成品。 */
   public synchronized Map<String, Object> create() throws IOException {
+    FlowLog.step("BACKUP", "开始备份：生成一致性数据库副本，再清除副本中的认证信息", Map.of());
     Path directory = props.root().resolve("backups");
     Files.createDirectories(directory);
     String id = "backup-" + clock.millis() + "-" + UUID.randomUUID().toString().substring(0, 8);
@@ -66,6 +68,7 @@ public class BackupService {
         archive = directory.resolve(id + ".zip");
     try {
       db.app().execute("VACUUM INTO '" + snapshot.toString().replace("'", "''") + "'");
+      // WAL 模式下不能随便复制正在写的 app.db 文件；VACUUM INTO 由数据库生成一致性副本。
       var backupDb = new JdbcTemplate(RuntimeConfig.sqlite(snapshot.toString()));
       backupDb.update("DELETE FROM admin_sessions");
       backupDb.update("DELETE FROM recovery_codes");
@@ -87,6 +90,16 @@ public class BackupService {
           throw new IOException("Missing or damaged source file");
         originals.add(original);
       }
+      for (var asset : cleanDb.queryForList("SELECT file_name,hash FROM note_assets")) {
+        String file = Database.text(asset, "file_name");
+        if (!file.matches("[a-f0-9-]{36}")) throw new IOException("Invalid asset name");
+        Path path = props.root().resolve("assets").resolve(file);
+        if (!Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS)
+            || !Crypto.hash(path).equals(asset.get("hash")))
+          throw new IOException("Missing or damaged asset");
+        originals.add(path);
+      }
+      FlowLog.step("BACKUP", "已清理副本认证信息并验证原件哈希，准备压缩", Map.of("sourceCount", originals.size()));
       long planned = Files.size(sanitized);
       for (Path path : originals) planned += Files.size(path);
       if (planned > MAX_TOTAL)
@@ -94,14 +107,16 @@ public class BackupService {
       Map<String, String> hashes = new LinkedHashMap<>();
       hashes.put("app.db", Crypto.hash(sanitized));
       for (Path original : originals)
-        hashes.put("sources/" + original.getFileName(), Crypto.hash(original));
+        hashes.put(
+            original.getParent().getFileName() + "/" + original.getFileName(),
+            Crypto.hash(original));
       try (var zip =
           new ZipOutputStream(Files.newOutputStream(partial, StandardOpenOption.CREATE_NEW))) {
         zip.putNextEntry(new ZipEntry("app.db"));
         Files.copy(sanitized, zip);
         zip.closeEntry();
         for (Path path : originals) {
-          zip.putNextEntry(new ZipEntry("sources/" + path.getFileName()));
+          zip.putNextEntry(new ZipEntry(path.getParent().getFileName() + "/" + path.getFileName()));
           Files.copy(path, zip);
           zip.closeEntry();
         }
@@ -134,9 +149,11 @@ public class BackupService {
       }
       try {
         Files.move(partial, archive, StandardCopyOption.ATOMIC_MOVE);
+        // 完整压缩成功后才改成 .zip，下载列表不会将正在写入的 .partial 当作可用备份。
       } catch (AtomicMoveNotSupportedException ex) {
         Files.move(partial, archive);
       }
+      FlowLog.step("BACKUP", "压缩完成并已转为正式归档，开始清理过期备份", Map.of());
       rotate(directory);
       LOG.info("stage=BACKUP event=BACKUP_CREATED backupId={}", id);
       return Map.of(

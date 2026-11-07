@@ -1,6 +1,7 @@
 package cyou.jujube.quota;
 
 import cyou.jujube.common.ApiException;
+import cyou.jujube.common.FlowLog;
 import cyou.jujube.storage.Database;
 import java.time.Clock;
 import org.springframework.stereotype.Service;
@@ -19,6 +20,7 @@ public class RateLimits {
   /** 在固定窗口内原子计数，超过限额抛出可识别业务错误；同一身份的并发请求不能绕过计数。 */
   public void require(String scope, String identity, int limit, long windowMillis) {
     long bucket = clock.millis() / windowMillis;
+    // 固定窗：除法取整把同一时间段归为一桶；跨窗口会用新 key，而非滑动统计最近一分钟。
     String key = scope + ":" + identity + ":" + bucket;
     int updated =
         db.app()
@@ -27,6 +29,11 @@ public class RateLimits {
                 key,
                 (bucket + 1) * windowMillis,
                 limit);
+    FlowLog.step(
+        "RATE_LIMIT",
+        "固定时间窗计数检查完成",
+        java.util.Map.of(
+            "scope", scope, "allowed", updated != 0, "limit", limit, "windowMs", windowMillis));
     if (updated == 0) throw new ApiException(429, "RATE_LIMITED", "请求较频繁，请稍后再试");
   }
 }

@@ -17,6 +17,7 @@ const sections = [
   ["contact", "04", "联系"],
 ];
 function open(section: string) {
+  // 抽屉选择写入 URL 查询参数，PublicPage 从路由派生打开状态，浏览器前进后退也能还原。
   if (route.path !== "/") void router.push({ path: "/", query: { section } });
   else void router.replace({ query: { section } });
 }
@@ -44,6 +45,7 @@ watch(
 </script>
 <template>
   <header
+    v-if="!route.path.startsWith('/admin')"
     class="topbar fixed inset-x-0 top-0 z-30 border-b border-slate-200/80 bg-white/90 backdrop-blur-md px-4 lg:px-8 flex flex-wrap items-center justify-between gap-x-3"
   >
     <RouterLink
@@ -86,7 +88,7 @@ watch(
         >访客对话</RouterLink
       >
       <RouterLink
-        to="/admin/sources"
+        to="/admin/notes"
         class="px-3 py-1.5 rounded-full"
         :class="
           route.path.startsWith('/admin')
@@ -102,7 +104,13 @@ watch(
     role="status"
     class="fixed top-0 inset-x-0 h-0.5 z-50 bg-slate-500"
   ></div>
-  <div class="page-root swiss-grid min-h-dvh relative"><RouterView /></div>
+  <div
+    class="page-root min-h-dvh relative"
+    :class="{ 'swiss-grid': !route.path.startsWith('/admin') }"
+    :style="route.path.startsWith('/admin') ? { paddingTop: '0' } : undefined"
+  >
+    <RouterView />
+  </div>
   <div
     v-if="toast"
     role="status"

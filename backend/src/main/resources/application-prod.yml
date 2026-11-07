@@ -14,5 +14,8 @@ clone:
     production: true
     chat-enabled: ${CLONE_CHAT_ENABLED:false}
 logging:
+  level:
+    # 生产默认保留原有业务事件；需要排障时可临时设置为 DEBUG。
+    cyou.jujube.common.FlowLog: ${CLONE_FLOW_LOG_LEVEL:INFO}
   file:
     name: /data/logs/clone-me.jsonl

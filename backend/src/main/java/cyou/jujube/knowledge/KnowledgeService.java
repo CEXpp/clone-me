@@ -2,6 +2,7 @@ package cyou.jujube.knowledge;
 
 import cyou.jujube.ai.EmbeddingProvider;
 import cyou.jujube.common.ApiException;
+import cyou.jujube.common.FlowLog;
 import cyou.jujube.ingestion.SourceService;
 import cyou.jujube.retrieval.TextIndex;
 import cyou.jujube.storage.Database;
@@ -36,6 +37,7 @@ public class KnowledgeService {
 
   /** 在短事务中复制可发布记录形成快照，并排队构建；构建期间仍使用旧版本回答。 */
   public Map<String, Object> release(String label, boolean keywordOnly) {
+    FlowLog.step("PUBLISH", "开始创建发布快照，校验名称、模型配置和可发布记录", Map.of("keywordOnly", keywordOnly));
     if (label == null || label.isBlank() || label.length() > 100)
       throw ApiException.badRequest("INVALID_LABEL", "发布版本名称需为 1–100 个字符");
     if (!keywordOnly && !embedding.configured())
@@ -52,6 +54,8 @@ public class KnowledgeService {
               var records =
                   sql.queryForList(
                       "SELECT c.*,s.name AS source_name,g.label AS source_label FROM candidates c JOIN sources s ON s.id=c.source_id JOIN segments g ON g.id=c.segment_id WHERE c.approved=1 AND c.withdrawn=0 AND c.kind!='REFERENCE' AND c.mastery!='UNCONFIRMED' AND g.speaker='SELF'");
+              // JOIN 把候选、来源和原文位置串起来；WHERE 同时满足批准、归属、类型与深度要求。
+              // 以下复制的是当时的正文，而非只存候选编号，因此后续编辑不会悄悄改写旧版。
               if (records.isEmpty())
                 throw ApiException.badRequest("NO_APPROVED_RECORDS", "没有可发布的本人确认资料");
               if (records.size() > limits.maxActiveRecords())
@@ -78,11 +82,13 @@ public class KnowledgeService {
                     TextIndex.terms(Database.text(record, "content")));
               return sources.enqueue("PUBLISH", id);
             });
+    FlowLog.step("PUBLISH", "快照与构建任务已提交，构建完成前继续使用原版本", Map.of("releaseId", id, "jobId", job));
     return Map.of("releaseId", id, "jobId", job, "status", "BUILDING");
   }
 
   /** 只允许切换到已就绪版本；回退仅改变当前版本指针，撤回限制继续实时生效。 */
   public void activate(String id) {
+    FlowLog.step("PUBLISH", "尝试切换已就绪版本，撤回资料仍会被排除", Map.of("releaseId", id));
     db.transaction(
         sql -> {
           var release = Database.required(sql, "SELECT status FROM releases WHERE id=?", id);
@@ -96,6 +102,7 @@ public class KnowledgeService {
   }
 
   public String active() {
+    // settings 中只存当前版本编号；切换这个指针即可让后续问答使用另一个 READY 快照。
     return db.setting("knowledge.active", "");
   }
 
@@ -127,6 +134,9 @@ public class KnowledgeService {
   public List<Map<String, Object>> releases() {
     return db.app()
         .queryForList(
-            "SELECT id,label,status,keyword_only,fingerprint,created_at FROM releases ORDER BY created_at DESC LIMIT 100");
+            "SELECT r.id,r.label,r.status,r.keyword_only,r.fingerprint,r.created_at,"
+                + "EXISTS(SELECT 1 FROM jobs j WHERE j.type='PUBLISH' AND j.subject_id=r.id "
+                + "AND j.status IN ('QUEUED','RUNNING','PAUSED')) AS build_busy "
+                + "FROM releases r ORDER BY r.created_at DESC LIMIT 100");
   }
 }

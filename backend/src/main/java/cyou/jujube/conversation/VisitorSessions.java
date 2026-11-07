@@ -65,6 +65,7 @@ public class VisitorSessions {
   }
 
   public Map<String, Object> require(String token) {
+    // token 是浏览器持有的秘密，id 是服务端内部关联编号。知道 id 不能代替持有 token。
     if (token == null) throw new ApiException(401, "VISITOR_SESSION_REQUIRED", "请先开始一段新聊天");
     var rows =
         db.sessions()
@@ -94,6 +95,7 @@ public class VisitorSessions {
 
   /** 仅取当前会话最近六条消息解释追问，限制模型上下文规模；这些消息不能成为个人事实证据。 */
   public List<Map<String, Object>> context(String id) {
+    // 数据库先倒序取最近六条，再反转成时间正序，交给模型时才是正常对话顺序。
     var rows =
         db.sessions()
             .queryForList(
@@ -165,6 +167,7 @@ public class VisitorSessions {
               cyou.jujube.common.Json.write(metadata));
           sql.update("UPDATE visitor_sessions SET expires_at=? WHERE id=?", now + LIFE, id);
           if (result != null)
+            // 问答消息与请求结果在同一事务内提交；断网后 GET 结果不会看到只写了一半的问答。
             sql.update(
                 "UPDATE chat_requests SET status='COMPLETED',response_json=? WHERE session_id=? AND request_id=? AND status='RUNNING'",
                 cyou.jujube.common.Json.write(result),
@@ -188,8 +191,10 @@ public class VisitorSessions {
         Database.text(row, "response_json"), ChatService.Answer.class);
   }
 
-  /** 在会话锁内注册请求键；已存在的键永不再次触发外部模型调用。 */
+  /** 在会话锁内注册请求键；仅确定失败且问题相同的请求可重新登记，其他已有状态禁止重复执行。 */
   public void register(String sessionId, String key, String question, String requestId) {
+    // 主键为 (session_id, request_key)，所以不同访客的键不会互相访问。
+    // FAILED 表示上层未发现付费预留；UNCERTAIN 仍可能收费，不能套用同一重试规则。
     String hash = Crypto.hash(question);
     int added =
         db.sessions()

@@ -15,6 +15,8 @@ import org.springframework.security.web.csrf.CsrfTokenRequestAttributeHandler;
 @Configuration
 @org.springframework.boot.autoconfigure.condition.ConditionalOnWebApplication
 public class SecurityConfig {
+  // 学习顺序：先看 authorizeHttpRequests 的路径规则，再看 CSRF，最后看过滤器执行位置。
+  // permitAll 只表示无需管理员登录，不代表写请求免防伪、免限流或免访客会话校验。
   @Bean
   org.springframework.security.core.userdetails.UserDetailsService noDefaultUser() {
     return username -> {
@@ -58,7 +60,7 @@ public class SecurityConfig {
                 h.contentSecurityPolicy(
                     c ->
                         c.policyDirectives(
-                            "default-src 'self'; script-src 'self' https://challenges.cloudflare.com; frame-src https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'")))
+                            "default-src 'self'; img-src 'self' https://card.net.coffee; connect-src 'self' https://api.ipify.org https://card.net.coffee; script-src 'self' https://challenges.cloudflare.com; frame-src https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'")))
         .exceptionHandling(
             e ->
                 e.authenticationEntryPoint(

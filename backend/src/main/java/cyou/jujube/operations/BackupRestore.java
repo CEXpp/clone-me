@@ -50,6 +50,7 @@ public final class BackupRestore {
         if ("manifest.json".equals(name)) continue;
         if (entry.isDirectory()
             || !("app.db".equals(name)
+                || name.matches("assets/[a-f0-9-]{36}")
                 || name.matches("sources/[a-f0-9-]{36}\\.(md|txt|pdf|docx|json)"))
             || !expected.path(name).isTextual()) throw new IOException("Unexpected archive entry");
         Path file = staging.resolve(name).normalize();
@@ -84,6 +85,12 @@ public final class BackupRestore {
         if (!seen.contains(name) || !expected.path(name).asText().equals(row.get("hash")))
           throw new IOException("Source reference is missing or damaged");
       }
+      if (manifest.path("schemaVersion").asInt() >= 3)
+        for (var row : db.queryForList("SELECT file_name,hash FROM note_assets")) {
+          String name = "assets/" + row.get("file_name");
+          if (!seen.contains(name) || !expected.path(name).asText().equals(row.get("hash")))
+            throw new IOException("Asset reference is missing or damaged");
+        }
       String active = manifest.path("knowledgeVersion").asText();
       var versions =
           db.queryForList("SELECT value FROM settings WHERE key='knowledge.active'", String.class);

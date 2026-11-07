@@ -86,6 +86,7 @@ public class SiliconFlowEmbedding implements EmbeddingProvider {
       }
       if (norm == 0) throw new IllegalArgumentException("Zero embedding");
       double scale = Math.sqrt(norm);
+      // L2 归一化：每个分量除以向量长度，使不同文本的向量长度统一为约 1。
       for (int i = 0; i < values.length; i++) values[i] /= (float) scale;
       long elapsed = (System.nanoTime() - started) / 1_000_000;
       long tokens = root.path("usage").path("total_tokens").asLong(0);

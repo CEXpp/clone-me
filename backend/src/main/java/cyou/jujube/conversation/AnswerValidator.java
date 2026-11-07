@@ -10,6 +10,7 @@ public final class AnswerValidator {
   private AnswerValidator() {}
 
   public static Set<String> citations(JsonNode draft, List<Passage> evidence) {
+    // 空集合统一表示结构校验未通过；不是“可以展示但不附来源”。上层会拦下这份草稿。
     String answer = draft.path("answer").asText();
     var ids = draft.path("evidenceIds");
     if (!draft.path("answer").isTextual()
@@ -24,6 +25,8 @@ public final class AnswerValidator {
       cited.add(id.asText());
     }
     var claims = draft.path("claims");
+    // evidenceIds 是整份答案的引用，claims 是模型列出的具体陈述及其引用。
+    // 这里只能检查编号关系；是否漏列事实、是否夸大经历，仍交给后续独立语义核验。
     if (!claims.isArray() || claims.isEmpty()) return Set.of();
     for (var claim : claims) {
       var refs = claim.path("evidenceIds");

@@ -54,6 +54,8 @@ class BusinessFlowTest {
   @Autowired ImportWorker worker;
   @Autowired KnowledgeService knowledge;
   @Autowired ChatService chat;
+  @Autowired cyou.jujube.notes.NoteService notes;
+  @Autowired cyou.jujube.notes.NoteIndex noteIndex;
   @Autowired VisitorSessions sessions;
   @Autowired HybridRetriever retriever;
   @Autowired BudgetService budget;
@@ -74,6 +76,10 @@ class BusinessFlowTest {
 
   @BeforeEach
   void reset() {
+    db.app().update("DELETE FROM notes_fts");
+    for (String table :
+        List.of("note_chunks", "note_chunk_parents", "note_assets", "note_history", "notes"))
+      db.app().update("DELETE FROM " + table);
     db.app().execute("INSERT INTO records_fts(records_fts) VALUES('delete-all')");
     for (String table :
         List.of(
@@ -125,9 +131,26 @@ class BusinessFlowTest {
     return id;
   }
 
+  String seedNote() throws Exception {
+    var note =
+        (Map<?, ?>)
+            notes.importFile(
+                "default",
+                true,
+                new MockMultipartFile(
+                    "file",
+                    "project.txt",
+                    "text/plain",
+                    "我在个人项目中使用 Java 实现了订单接口。".getBytes(StandardCharsets.UTF_8)));
+    noteIndex.tick();
+    return db.app()
+        .queryForObject(
+            "SELECT id FROM note_chunks WHERE note_id=? LIMIT 1", String.class, note.get("id"));
+  }
+
   @Test
   void uploadApprovePublishAnswerAndIsolateVisitors() throws Exception {
-    String record = seed(false);
+    String record = seedNote();
     var alice = sessions.create();
     var bob = sessions.create();
     var answer = chat.ask("test-flow", alice.token(), "ip-one", "介绍你的 Java 订单接口项目");
@@ -159,7 +182,7 @@ class BusinessFlowTest {
 
   @Test
   void jevFailureFallsBackButStillWithholdsUnsupportedAnswer() throws Exception {
-    seed(true);
+    seedNote();
     decision.unavailable = true;
     generation.reject = true;
     var visitor = sessions.create();
@@ -177,7 +200,7 @@ class BusinessFlowTest {
 
   @Test
   void normalInsufficientDecisionCannotBypassTheGate() throws Exception {
-    seed(true);
+    seedNote();
     decision.insufficient = true;
     var visitor = sessions.create();
     var answer = chat.ask("jev-insufficient", visitor.token(), "ip-four", "Java 项目");
@@ -193,7 +216,7 @@ class BusinessFlowTest {
 
   @Test
   void unknownCitationIsRejectedBeforeSemanticCheck() throws Exception {
-    seed(true);
+    seedNote();
     generation.invalidCitation = true;
     var visitor = sessions.create();
     assertEquals(
@@ -364,7 +387,7 @@ class BusinessFlowTest {
 
   @Test
   void duplicateVisitorRequestReturnsStoredAnswerWithoutMoreModelCalls() throws Exception {
-    seed(true);
+    seedNote();
     var visitor = sessions.create();
     var first =
         chat.ask(
@@ -431,6 +454,33 @@ class BusinessFlowTest {
   }
 
   @Test
+  void releaseDeletionTracksBuildJobsRatherThanReleaseStatus() throws Exception {
+    seed(true);
+    String current = knowledge.active();
+    var pending = knowledge.release("待构建版本", true);
+    String id = pending.get("releaseId").toString();
+    for (String status : List.of("QUEUED", "RUNNING", "PAUSED")) {
+      db.app().update("UPDATE jobs SET status=? WHERE id=?", status, pending.get("jobId"));
+      var release =
+          knowledge.releases().stream()
+              .filter(r -> id.equals(r.get("id")))
+              .findFirst()
+              .orElseThrow();
+      assertEquals(1, ((Number) release.get("build_busy")).intValue());
+      assertEquals(
+          "RELEASE_BUSY", assertThrows(ApiException.class, () -> knowledge.delete(id)).code());
+    }
+    db.app().update("UPDATE jobs SET status='FAILED' WHERE id=?", pending.get("jobId"));
+    var failed =
+        knowledge.releases().stream().filter(r -> id.equals(r.get("id"))).findFirst().orElseThrow();
+    assertEquals("BUILDING", failed.get("status"));
+    assertEquals(0, ((Number) failed.get("build_busy")).intValue());
+    knowledge.delete(id);
+    assertEquals(current, knowledge.active());
+    assertTrue(knowledge.releases().stream().noneMatch(r -> id.equals(r.get("id"))));
+  }
+
+  @Test
   void jsonOwnershipRequiresMappingAndOnlyOwnStatementsBecomeCandidates() throws Exception {
     String json =
         "[{\"speaker\":\"me\",\"content\":\"我了解 Java\"},{\"speaker\":\"them\",\"content\":\"我负责 Kubernetes 运维\"}]";
@@ -462,7 +512,7 @@ class BusinessFlowTest {
     var missing = browser.get("/not-present.fixture");
     assertEquals(404, missing.statusCode());
     assertEquals("RESOURCE_NOT_FOUND", Json.read(missing.body()).path("code").asText());
-    assertEquals(401, browser.get("/api/admin/sources").statusCode());
+    assertEquals(401, browser.get("/api/admin/notes").statusCode());
     assertEquals(403, browser.postWithoutCsrf("/api/public/session", "{}").statusCode());
     browser.csrf();
     assertEquals(200, browser.post("/api/public/session", "{}").statusCode());
@@ -480,10 +530,16 @@ class BusinessFlowTest {
                         "code",
                         recoveryCodes.next())))
             .statusCode());
-    assertEquals(200, browser.get("/api/admin/sources").statusCode());
+    assertEquals(200, browser.get("/api/admin/notes").statusCode());
     browser.csrf(); // 登录成功后安全框架会轮换防伪状态，下一次写请求必须重新获取令牌。
+    var created =
+        browser.post(
+            "/api/admin/notes", Json.write(Map.of("sectionId", "default", "title", "HTTP 笔记")));
+    assertEquals(200, created.statusCode());
+    assertTrue(Json.read(created.body()).path("body").isObject());
+    browser.csrf();
     assertEquals(200, browser.post("/api/auth/logout", "{}").statusCode());
-    assertEquals(401, browser.get("/api/admin/sources").statusCode());
+    assertEquals(401, browser.get("/api/admin/notes").statusCode());
   }
 
   class Browser {
@@ -517,6 +573,13 @@ class BusinessFlowTest {
               .header(header, token)
               .POST(HttpRequest.BodyPublishers.ofString(body))
               .build(),
+          HttpResponse.BodyHandlers.ofString());
+    }
+
+    HttpResponse<String> delete(String path) throws Exception {
+      csrf();
+      return http.send(
+          HttpRequest.newBuilder(URI.create(base() + path)).header(header, token).DELETE().build(),
           HttpResponse.BodyHandlers.ofString());
     }
 

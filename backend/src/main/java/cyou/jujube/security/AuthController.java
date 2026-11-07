@@ -49,6 +49,7 @@ public class AuthController {
 
   @GetMapping("/me")
   Map<String, Object> me() {
+    // 此方法不再验证密码：到达这里说明过滤器已恢复身份，安全路径规则已允许管理员访问。
     return Map.of("authenticated", true, "role", "ADMIN");
   }
 

@@ -112,6 +112,7 @@ public class Maintenance {
 
   @Scheduled(fixedDelay = 60_000)
   public void clean() {
+    // 接口访问时已经检查 expires_at；定时删除负责释放空间，不是等清理后才禁止访问。
     long now = clock.millis();
     db.sessions().update("DELETE FROM visitor_sessions WHERE expires_at<=?", now);
     db.app().update("DELETE FROM admin_sessions WHERE expires_at<=?", now);
@@ -141,6 +142,7 @@ public class Maintenance {
                 "SELECT * FROM notification_events WHERE status='PENDING' AND attempts<3 AND (last_attempt IS NULL OR last_attempt<?) ORDER BY created_at LIMIT 3",
                 now - Duration.ofMinutes(5).toMillis());
     for (var event : events) {
+      // 邮件发送独立于问答事务；先登记尝试次数，失败后下一轮按间隔重试，最多三次。
       String id = Database.text(event, "id");
       db.app()
           .update(

@@ -1,40 +1,8 @@
 /** 与后端显式契约对应的类型。数据库投影的既有 snake_case 字段保留兼容。 */
 export interface Page<T> {
+  // T 是列表条目的类型，例如 Page<Job>；nextCursor 为空字符串表示没有下一页。
   items: T[];
   nextCursor: string;
-}
-export interface Candidate {
-  id: string;
-  source_id: string;
-  segment_id: string;
-  kind: string;
-  content: string;
-  mastery: string;
-  approved: number;
-  withdrawn: number;
-  manually_edited: number;
-  revision: number;
-  updated_at: number;
-}
-export interface SourceSummary {
-  id: string;
-  name: string;
-  format: string;
-  status: string;
-  created_at: number;
-  error_code: string | null;
-}
-export interface Segment {
-  id: string;
-  ordinal: number;
-  label: string;
-  speaker: string;
-  content: string;
-}
-export interface SourceDetail {
-  source: SourceSummary;
-  candidates: Candidate[];
-  segments: Segment[];
 }
 export interface Job {
   id: string;
@@ -47,15 +15,8 @@ export interface Job {
   created_at: number;
   updated_at: number;
 }
-export interface Release {
-  id: string;
-  label: string;
-  status: string;
-  keyword_only: number;
-  fingerprint: string;
-  created_at: number;
-}
 export interface Call {
+  // reserved 和 actual 都是微元；actual=null 表示尚无确定结算额，不能当成费用为 0。
   id: string;
   request_id: string;
   stage: string;
@@ -81,6 +42,7 @@ export interface Providers {
   paidCallsEnabled: boolean;
   generation: { configured: boolean };
   embedding: { configured: boolean; fingerprint: string };
+  rerank: { configured: boolean; model: string; provider: string };
   decision: {
     provider: string;
     typesafeThreshold: string;
@@ -134,6 +96,7 @@ export interface VisitorSession {
   messages?: Message[];
 }
 export interface Answer {
+  // status 解释回答结果；answer 也可能是证据不足的固定说明，需结合 status 和 sources 阅读。
   requestId: string;
   answer: string;
   status: string;

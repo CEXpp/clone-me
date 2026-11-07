@@ -8,6 +8,7 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 $taskRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
+Write-Host "[开发流程] 开始执行 $Action，正在准备项目环境。"
 if (-not $EnvFile) { $EnvFile = Join-Path $taskRoot '.env' }
 # 环境文件按纯文本处理，只允许项目认可的配置前缀，绝不点执行或调用表达式。
 if (Test-Path -LiteralPath $EnvFile) {
@@ -16,7 +17,7 @@ if (Test-Path -LiteralPath $EnvFile) {
         if ($line -notmatch '^\s*([A-Z][A-Z0-9_]*)\s*=(.*)$') { throw 'Invalid .env line; use KEY=value.' }
         $taskKey = $Matches[1]
         $taskValue = $Matches[2].Trim()
-        if ($taskKey -notmatch '^(CLONE_|DEEPSEEK_|SILICONFLOW_|TYPESAFE_|DASHSCOPE_|BAILIAN_|TURNSTILE_|SPRING_MAIL_|DECISION_PROVIDER$|PORT$)') { throw "Unsupported environment key: $taskKey" }
+        if ($taskKey -notmatch '^(CLONE_|DEEPSEEK_|SILICONFLOW_|RERANK_|TYPESAFE_|DASHSCOPE_|BAILIAN_|TURNSTILE_|SPRING_MAIL_|DECISION_PROVIDER$|PORT$)') { throw "Unsupported environment key: $taskKey" }
         if ($taskValue.Length -ge 2 -and (($taskValue.StartsWith('"') -and $taskValue.EndsWith('"')) -or ($taskValue.StartsWith("'") -and $taskValue.EndsWith("'")))) { $taskValue = $taskValue.Substring(1, $taskValue.Length - 2) }
         [Environment]::SetEnvironmentVariable($taskKey, $taskValue, 'Process')
     }
@@ -25,6 +26,7 @@ $taskPrevious = Get-Location
 try {
     # 前端先构建到 dist，随后 Maven 把静态文件一起打入可执行 JAR。
     if ($Action -in @('Check', 'Test', 'Build', 'Format', 'FrontendDev')) {
+        Write-Host '[开发流程] 进入前端目录，检查依赖并执行所选命令。'
         Set-Location -LiteralPath (Join-Path $taskRoot 'frontend')
         if (-not (Test-Path -LiteralPath 'node_modules')) { & npm ci --no-audit --no-fund; if ($LASTEXITCODE -ne 0) { throw 'Frontend dependency installation failed.' } }
         switch ($Action) {
@@ -42,6 +44,7 @@ try {
         if ($Action -eq 'FrontendDev') { return }
     }
     Set-Location -LiteralPath (Join-Path $taskRoot 'backend')
+    Write-Host '[开发流程] 进入后端目录，执行 Maven 或启动 Java 服务。'
     # 直接调用 Maven，沿用开发者已有的 settings、镜像与本地仓库，不在项目中覆盖机器配置。
     # 格式化工具独立放在 format 配置集中，普通编译和启动不需要解析它。
     switch ($Action) {
@@ -65,4 +68,5 @@ try {
         }
     }
     if ($LASTEXITCODE -ne 0) { throw "$Action failed with exit code $LASTEXITCODE" }
+    Write-Host "[开发流程] $Action 执行完成。"
 } finally { Set-Location -LiteralPath $taskPrevious.Path }

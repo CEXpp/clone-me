@@ -17,7 +17,7 @@ public record CloneProperties(
     String deepseekUrl,
     BigDecimal deepseekInputCnyPerMillion,
     BigDecimal deepseekOutputCnyPerMillion,
-    // 向量端点与模型共同进入索引指纹，修改后需要创建新的发布版本。
+    // 向量端点与模型共同进入索引指纹，修改后自动重建已共享笔记的索引。
     String embeddingKey,
     String embeddingUrl,
     String embeddingModel,

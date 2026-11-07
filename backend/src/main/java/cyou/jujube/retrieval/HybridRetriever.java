@@ -3,13 +3,14 @@ package cyou.jujube.retrieval;
 import cyou.jujube.ai.EmbeddingProvider;
 import cyou.jujube.common.ApiException;
 import cyou.jujube.common.Diagnostics;
+import cyou.jujube.common.FlowLog;
 import cyou.jujube.security.Crypto;
 import cyou.jujube.storage.Database;
 import java.util.*;
 import org.springframework.stereotype.Service;
 
 /**
- * 实现 Spring AI 检索接口，把中文关键词结果和独立向量召回按排名融合。 两条召回路径各取前 24 项，使用倒数排名融合选出最多 8 项；不直接相加不可比的原始分数。
+ * 把中文关键词结果和独立向量召回按排名融合。 两条召回路径各取前 24 项，使用倒数排名融合选出最多 8 项；不直接相加不可比的原始分数。
  * 向量故障或指纹不符时保留关键词路径，并记录原因；所有路径均排除表达样例和已撤回记录。
  */
 @Service
@@ -51,12 +52,17 @@ public class HybridRetriever {
   /** 固定版本检索，分别排名后融合；向量分支失败只降级召回方式，不放宽事实核验。 */
   public Retrieved search(String requestId, String version, String question) {
     long started = System.nanoTime();
-    if (version.isBlank()) return new Retrieved(version, List.of(), false, "NO_RELEASE");
+    if (version.isBlank()) {
+      FlowLog.step("RETRIEVE", "尚无已发布知识版本，返回空证据", Map.of());
+      return new Retrieved(version, List.of(), false, "NO_RELEASE");
+    }
+    FlowLog.step("RETRIEVE", "开始固定版本的关键词与向量检索", Map.of());
     var release =
         Database.required(
             db.app(), "SELECT * FROM releases WHERE id=? AND status='READY'", version);
     // 融合的是排名：不同检索器的原始分数不在同一尺度，不能直接相加。
     var ranks = new LinkedHashMap<Long, Double>();
+    // 两路用发布快照 row_id 去重；Passage.id 则是候选 record_id，供引用和撤回检查使用。
     var rowsById = new HashMap<Long, Map<String, Object>>();
     String query = TextIndex.query(question);
     if (!query.isBlank()) {
@@ -66,11 +72,13 @@ public class HybridRetriever {
                   "SELECT r.row_id,r.record_id,r.source_id,r.source_name,r.source_label,r.kind,r.mastery,r.content FROM records_fts JOIN release_records r ON r.row_id=records_fts.rowid JOIN candidates c ON c.id=r.record_id WHERE records_fts MATCH ? AND r.release_id=? AND r.kind!='STYLE' AND c.withdrawn=0 ORDER BY bm25(records_fts),r.row_id LIMIT 24",
                   query,
                   version);
+      FlowLog.step("RETRIEVE", "关键词查询完成，准备累计排名得分", Map.of("keywordCount", matches.size()));
       for (int i = 0; i < matches.size(); i++) {
         var row = matches.get(i);
         long id = Database.number(row, "row_id");
         rowsById.put(id, row);
         ranks.merge(id, 1.0 / (60 + i + 1), Double::sum);
+        // RRF：本路第 1 名加 1/61，第 2 名加 1/62；两路都命中就累加排名贡献。
       }
     }
     boolean semantic = false;
@@ -84,14 +92,19 @@ public class HybridRetriever {
         var cached = queryCache.get(cacheKey);
         float[] vector;
         if (cached == null || cached.expiresAt() < System.currentTimeMillis()) {
+          FlowLog.step("RETRIEVE", "查询向量缓存未命中或已过期，开始生成向量", Map.of());
           vector = embedding.embed(requestId, question);
           queryCache.put(cacheKey, new CachedQuery(vector, System.currentTimeMillis() + 300_000));
-        } else vector = cached.vector();
+        } else {
+          FlowLog.step("RETRIEVE", "命中查询向量缓存，跳过外部向量调用", Map.of());
+          vector = cached.vector();
+        }
         record Scored(long id, double score) {}
         var best =
             new PriorityQueue<Scored>(
                 Comparator.comparingDouble(Scored::score)
                     .thenComparing(Comparator.comparingLong(Scored::id).reversed()));
+        // 小顶堆让最低分在队头；每次超过 24 项就弹出最差项，无需把全部向量排序存入内存。
         float[] queryVector = vector;
         db.app()
             .query(
@@ -115,6 +128,7 @@ public class HybridRetriever {
                         .reversed()
                         .thenComparingLong(Scored::id))
                 .toList();
+        FlowLog.step("RETRIEVE", "向量相似度筛选完成，准备与关键词排名融合", Map.of("semanticCount", scored.size()));
         if (!scored.isEmpty()) {
           String placeholders = String.join(",", Collections.nCopies(scored.size(), "?"));
           var selectedRows =

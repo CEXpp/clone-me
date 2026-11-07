@@ -87,6 +87,7 @@ public class SystemOneDecisions implements DecisionProvider {
   public Judgment evaluate(String requestId, String question, List<Evidence> evidence) {
     RequestDeadline.check();
     String selected = selected();
+    // disabled 直接放行已检索证据；最终生成、引用检查和语义核验仍由 ChatService 执行。
     if ("disabled".equals(selected)) return new Judgment(evidence, false, Map.of(), "disabled", "");
     Adapter adapter = adapter(selected);
     if (adapter.key() == null
@@ -145,6 +146,7 @@ public class SystemOneDecisions implements DecisionProvider {
       var accepted = new ArrayList<Evidence>();
       var scores = new LinkedHashMap<String, Double>();
       for (int i = 0; i < size; i++) {
+        // p0、p1 等是本次协议判断键，需按原顺序映射回 evidence 的真实资料编号。
         var answer = answers.path("p" + i);
         if (!answer.path("noul").isNumber())
           throw new IllegalArgumentException("Missing decision probability");

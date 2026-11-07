@@ -12,7 +12,7 @@ import org.springframework.jdbc.datasource.init.ScriptUtils;
 
 /** 每个库分别记录迁移版本和校验和；拒绝被修改的已执行脚本和未来版本，不做自动降级。 */
 public final class SchemaMigrations {
-  public static final int VERSION = 2;
+  public static final int VERSION = 4;
 
   private SchemaMigrations() {}
 
@@ -35,6 +35,7 @@ public final class SchemaMigrations {
           throw new IllegalStateException(
               "Unsupported database schema; use a compatible application version");
         for (int version = 1; version <= VERSION; version++) {
+          // 初始建表是版本 1，后续变更按 V2、V3……依次执行，各库独立登记进度。
           String name =
               version == 1
                   ? "schema-" + database + ".sql"
@@ -42,6 +43,7 @@ public final class SchemaMigrations {
           var resource = new ClassPathResource(name);
           String script = resource.getContentAsString(StandardCharsets.UTF_8).replace("\r\n", "\n");
           String checksum = Crypto.hash(script + (version == 1 ? "\nlegacy-adoption-v1" : ""));
+          // 校验和包含 SQL 注释，所以已执行脚本连注释也不能直接改；新变更要新增迁移版本。
           if (applied.containsKey(version)) {
             if (!checksum.equals(applied.get(version)))
               throw new IllegalStateException("Database migration checksum mismatch: " + name);
@@ -71,6 +73,7 @@ public final class SchemaMigrations {
   }
 
   private static void adoptLegacy(Connection connection, String database) throws Exception {
+    // 接管旧库时只补缺列。旧候选视为人工编辑过，防止新提取任务覆盖历史整理成果。
     String table = "app".equals(database) ? "candidates" : "messages";
     String column = "app".equals(database) ? "manually_edited" : "metadata_json";
     var columns = new ArrayList<String>();

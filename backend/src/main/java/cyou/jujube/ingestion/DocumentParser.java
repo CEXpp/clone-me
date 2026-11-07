@@ -1,6 +1,7 @@
 package cyou.jujube.ingestion;
 
 import cyou.jujube.common.ApiException;
+import cyou.jujube.common.FlowLog;
 import cyou.jujube.common.Json;
 import java.io.*;
 import java.nio.charset.StandardCharsets;
@@ -17,11 +18,14 @@ import org.springframework.stereotype.Component;
 
 /**
  * 把五种允许的文件格式解析成带原文位置和说话者归属的片段，仅提取文字，不做 OCR。 文件大小、页数、压缩条目、正文长度和片段数量分别设限，降低损坏文件或恶意输入的资源影响。
- * 解析成功不代表本人掌握内容；人工确认仍在后续资料审阅流程完成。
+ * 笔记导入只使用文字解析；旧资料提取接口保留作历史数据兼容。
  */
 @Component
 public class DocumentParser {
   public record Segment(String id, int ordinal, String label, String speaker, String content) {}
+
+  // Segment 是原文切片：label 帮人定位（如页码），ordinal 保持顺序，speaker 只标记归属。
+  // speaker 字段服务于旧格式兼容；新笔记是否公开由 notes.knowledge 决定。
 
   public record Mapping(String textField, String speakerField, String selfSpeaker) {
     public static Mapping from(String json) {
@@ -48,6 +52,8 @@ public class DocumentParser {
   public List<Segment> parse(Path path, String format, Mapping mapping) throws Exception {
     if (Files.size(path) > 10 * 1024 * 1024)
       throw ApiException.badRequest("FILE_TOO_LARGE", "文件超过 10MB，请拆分后上传");
+    FlowLog.step("PARSE", "文件大小检查通过，按格式选择解析分支", Map.of("format", format));
+    // result 暂存在内存；解析器只返回片段，不负责批准或发布资料。
     List<Segment> result = new ArrayList<>();
     switch (format) {
       case "md", "txt" ->
@@ -58,7 +64,12 @@ public class DocumentParser {
           if (pdf.getNumberOfPages() > 150)
             throw ApiException.badRequest("TOO_MANY_PAGES", "PDF 超过 150 页，请拆分");
           var text = new PDFTextStripper();
+          text.setSortByPosition(true);
           for (int page = 1; page <= pdf.getNumberOfPages(); page++) {
+            FlowLog.step(
+                "PARSE",
+                "正在提取 PDF 当前页文字",
+                Map.of("page", page, "totalPages", pdf.getNumberOfPages()));
             text.setStartPage(page);
             text.setEndPage(page);
             split(text.getText(pdf), "第 " + page + " 页", "SELF", result);
@@ -71,6 +82,7 @@ public class DocumentParser {
           throw ApiException.badRequest("UNSUPPORTED_FORMAT", "仅支持 md、txt、文字 pdf、docx 和 json");
     }
     if (result.isEmpty()) throw ApiException.badRequest("NO_TEXT", "未提取到文字；首版不支持扫描件或图片识别");
+    FlowLog.step("PARSE", "全部文字切片完成，返回只读片段列表", Map.of("segmentCount", result.size()));
     return List.copyOf(result);
   }
 
@@ -79,6 +91,7 @@ public class DocumentParser {
     var root = Json.read(Files.readString(file, StandardCharsets.UTF_8));
     var messages = root.isArray() ? root : root.path("messages");
     if (!messages.isArray()) messages = Json.read("[" + Json.write(root) + "]");
+    // 三种外部结构统一成数组，后面的循环只需处理一种形式；字段名称由 mapping 指定。
     if (messages.size() > 3000)
       throw ApiException.badRequest("TOO_MANY_MESSAGES", "JSON 消息过多，请拆分导入");
     int count = 0;
@@ -156,6 +169,7 @@ public class DocumentParser {
     while (offset < text.length()) {
       int end = Math.min(text.length(), offset + 1200);
       if (end < text.length()) {
+        // 1200 字符是硬上限；若后半段存在换行，就提前在那里切，尽量保留完整段落。
         int boundary = text.lastIndexOf('\n', end);
         if (boundary > offset + 400) end = boundary;
       }

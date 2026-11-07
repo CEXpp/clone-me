@@ -1,6 +1,8 @@
 package cyou.jujube.ingestion;
 
 import cyou.jujube.common.ApiException;
+import cyou.jujube.common.FlowLog;
+import cyou.jujube.common.Json;
 import cyou.jujube.config.CloneProperties;
 import cyou.jujube.config.OperationsProperties;
 import cyou.jujube.security.Crypto;
@@ -56,6 +58,7 @@ public class SourceService {
   /** 校验文件和字段映射后以随机名称落盘，再创建资料记录和解析任务；数据库失败时清理本次文件。 */
   public synchronized Map<String, Object> upload(MultipartFile file, String mapping)
       throws IOException {
+    FlowLog.step("UPLOAD", "收到上传，开始校验存储容量、格式和整理模式", Map.of());
     checkStorage();
     if (db.app().queryForObject("SELECT COUNT(*) FROM sources", Long.class) >= limits.maxSources())
       throw ApiException.badRequest("SOURCE_CAPACITY_REACHED", "资料数量达到上限，请先清理历史资料或调整容量");
@@ -74,8 +77,15 @@ public class SourceService {
       throw ApiException.badRequest("FILE_TOO_LARGE", "文件超过 10MB");
     String config = mapping == null ? "{}" : mapping;
     DocumentParser.Mapping.from(config);
+    String documentType = Json.read(config).path("documentType").asText("PERSONAL");
+    if (!Set.of("PERSONAL", "KNOWLEDGE").contains(documentType))
+      throw ApiException.badRequest("INVALID_MAPPING", "资料用途需为知识教材/笔记或个人经历/表达");
+    String mode = Json.read(config).path("processingMode").asText("LOCAL");
+    if (!Set.of("AI", "PREPARED", "LOCAL").contains(mode))
+      throw ApiException.badRequest("INVALID_MAPPING", "整理模式需为站内 AI 或已整理资料直接导入");
     byte[] content = file.getBytes();
     String id = UUID.randomUUID().toString(), stored = id + "." + format;
+    // name 用于界面展示，stored 用于磁盘保存；不把用户文件名直接当作服务器路径。
     Path directory = props.root().resolve("sources");
     Files.createDirectories(directory);
     long bytes = 0;
@@ -87,6 +97,10 @@ public class SourceService {
     }
     if (bytes + content.length > limits.maxSourceMb() * 1024 * 1024)
       throw ApiException.badRequest("SOURCE_CAPACITY_REACHED", "资料总大小达到上限，请先清理历史资料或调整容量");
+    FlowLog.step(
+        "UPLOAD",
+        "文件校验通过，开始以随机名称保存原件",
+        Map.of("format", format, "bytes", content.length, "mode", mode));
     Files.write(directory.resolve(stored), content);
     String original = name;
     String job;
@@ -106,16 +120,21 @@ public class SourceService {
                 return enqueue("IMPORT", id);
               });
     } catch (RuntimeException ex) {
+      // 文件系统不受 SQLite 事务控制，所以数据库回滚后还要主动清理刚写入的原件。
       Files.deleteIfExists(directory.resolve(stored));
       throw ex;
     }
+    FlowLog.step("UPLOAD", "原件及任务已保存，后续由后台任务异步解析", Map.of("sourceId", id, "jobId", job));
     return Map.of("sourceId", id, "jobId", job, "status", "QUEUED");
   }
 
   /** 把任务写入数据库队列；被外层应用库事务调用时与业务提交一起成功或回滚。 */
   public String enqueue(String type, String subject) {
+    // subject 是工作对象编号：IMPORT/EXTRACT 指向 source，PUBLISH 指向 release。
+    // 返回 jobId 只说明任务已登记，处理结果要等 ImportWorker 推进后再查看。
     if (!Set.of("IMPORT", "EXTRACT", "PUBLISH").contains(type))
       throw new IllegalArgumentException("Unknown job type");
+    if ("EXTRACT".equals(type)) requireAiMode(subject);
     var existing =
         db.app()
             .queryForList(
@@ -123,7 +142,10 @@ public class SourceService {
                 String.class,
                 type,
                 subject);
-    if (!existing.isEmpty()) return existing.getFirst();
+    if (!existing.isEmpty()) {
+      FlowLog.step("JOB", "已有同类未完成任务，复用任务编号", Map.of("jobType", type));
+      return existing.getFirst();
+    }
     String id = UUID.randomUUID().toString();
     int inserted =
         db.app()
@@ -146,7 +168,17 @@ public class SourceService {
       if (!active.isEmpty()) return active.getFirst();
       throw new ApiException(429, "QUEUE_FULL", "后台任务已达上限，请等待任务完成或处理暂停任务");
     }
+    // 此处可能仍在外层事务中；最终是否提交，以外层事务结果为准。
+    FlowLog.step("JOB", "任务已登记，等待事务提交后由调度器领取", Map.of("jobId", id, "jobType", type));
     return id;
+  }
+
+  public void requireAiMode(String id) {
+    var source = Database.required(db.app(), "SELECT mapping_json FROM sources WHERE id=?", id);
+    if ("PREPARED"
+        .equals(Json.read(Database.text(source, "mapping_json")).path("processingMode").asText()))
+      throw ApiException.badRequest(
+          "PREPARED_IMPORT_NO_AI", "该资料选择了直接导入，不调用站内整理模型；如需 AI 整理，请按站内 AI 模式重新上传");
   }
 
   /** 只允许失败或暂停的任务重新入队，保留已有游标；不自动重试可能产生费用的操作。 */
@@ -187,6 +219,136 @@ public class SourceService {
     public CandidateUpdate(String kind, String content, String mastery, boolean approved) {
       this(kind, content, mastery, approved, null);
     }
+  }
+
+  /** 原文独立保存；知识资料的候选来自结构整理，个人资料保留原有待提取流程。 */
+  public int createDrafts(
+      String sourceId, List<DocumentParser.Segment> segments, boolean knowledge) {
+    int count = 0;
+    Set<String> seen = new HashSet<>();
+    for (var segment : segments) {
+      if (!"SELF".equals(segment.speaker())) continue;
+      var drafts =
+          knowledge
+              ? KnowledgeDrafts.build(segment.content(), segment.label())
+              : List.of(segment.content());
+      for (String content : drafts) {
+        if (knowledge && !seen.add(content.replaceAll("\\s+", ""))) continue;
+        if (++count > limits.maxActiveRecords())
+          throw ApiException.badRequest("KNOWLEDGE_CAPACITY_REACHED", "知识条目过多，请按章节拆分资料");
+        db.app()
+            .update(
+                "INSERT INTO candidates(id,source_id,segment_id,kind,content,mastery,updated_at) VALUES(?,?,?,?,?,'UNCONFIRMED',?)",
+                UUID.randomUUID().toString(),
+                sourceId,
+                segment.id(),
+                knowledge ? "KNOWLEDGE" : "REFERENCE",
+                content,
+                clock.millis());
+      }
+    }
+    return count;
+  }
+
+  /** 仅替换未被人工处理或版本引用的草稿；整个过程在短事务内执行，可重复运行。 */
+  public Map<String, Object> rebuildKnowledge(String id) throws Exception {
+    var original = Database.required(db.app(), "SELECT * FROM sources WHERE id=?", id);
+    if ("PREPARED"
+        .equals(Json.read(Database.text(original, "mapping_json")).path("processingMode").asText()))
+      throw ApiException.badRequest("PREPARED_IMPORT_NO_AI", "已整理资料保留原有条目边界，无需重新切分");
+    // PDF 的文字存储顺序可能与阅读顺序不同。重读版面后，仅替换没有人工整理过的页。
+    var reparsed =
+        "pdf".equals(original.get("format"))
+            ? new DocumentParser()
+                .parse(
+                    props.root().resolve("sources").resolve(Database.text(original, "file_name")),
+                    "pdf",
+                    DocumentParser.Mapping.from(Database.text(original, "mapping_json")))
+            : List.<DocumentParser.Segment>of();
+    return db.transaction(
+        sql -> {
+          checkStorage();
+          var source =
+              Database.required(
+                  sql, "SELECT * FROM sources WHERE id=? AND status='AWAITING_REVIEW'", id);
+          if (sql.queryForObject(
+                  "SELECT COUNT(*) FROM jobs WHERE subject_id=? AND status='RUNNING'",
+                  Long.class,
+                  id)
+              > 0) throw new ApiException(409, "SOURCE_BUSY", "资料任务正在运行，请等待完成后整理");
+          var protectedIds =
+              new HashSet<>(
+                  sql.queryForList(
+                      "SELECT DISTINCT c.segment_id FROM candidates c WHERE c.source_id=? AND (c.manually_edited=1 OR c.approved=1 OR c.withdrawn=1 OR EXISTS(SELECT 1 FROM release_records r WHERE r.record_id=c.id))",
+                      String.class,
+                      id));
+          sql.update(
+              "UPDATE jobs SET status='CANCELLED',error_code='DRAFTS_REBUILT',updated_at=? WHERE subject_id=? AND type='EXTRACT' AND status IN ('QUEUED','PAUSED')",
+              clock.millis(),
+              id);
+          var segments =
+              sql
+                  .queryForList("SELECT * FROM segments WHERE source_id=? ORDER BY ordinal", id)
+                  .stream()
+                  .filter(s -> !protectedIds.contains(Database.text(s, "id")))
+                  .map(
+                      s ->
+                          new DocumentParser.Segment(
+                              Database.text(s, "id"),
+                              (int) Database.number(s, "ordinal"),
+                              Database.text(s, "label"),
+                              Database.text(s, "speaker"),
+                              Database.text(s, "content")))
+                  .toList();
+          if (!reparsed.isEmpty()) {
+            var protectedPages = new HashSet<String>();
+            for (var row : sql.queryForList("SELECT id,label FROM segments WHERE source_id=?", id))
+              if (protectedIds.contains(Database.text(row, "id")))
+                protectedPages.add(pageKey(Database.text(row, "label")));
+            var replaceable =
+                segments.stream()
+                    .filter(s -> !protectedPages.contains(pageKey(s.label())))
+                    .toList();
+            for (var segment : replaceable) {
+              sql.update(
+                  "DELETE FROM candidates WHERE source_id=? AND segment_id=?", id, segment.id());
+              sql.update("DELETE FROM segments WHERE source_id=? AND id=?", id, segment.id());
+            }
+            segments =
+                reparsed.stream()
+                    .filter(s -> !protectedPages.contains(pageKey(s.label())))
+                    .toList();
+            for (var segment : segments)
+              sql.update(
+                  "INSERT INTO segments(id,source_id,ordinal,label,speaker,content) VALUES(?,?,?,?,?,?)",
+                  segment.id(),
+                  id,
+                  segment.ordinal(),
+                  segment.label(),
+                  segment.speaker(),
+                  segment.content());
+          }
+          for (var segment : segments)
+            sql.update(
+                "DELETE FROM candidates WHERE source_id=? AND segment_id=?", id, segment.id());
+          int created = createDrafts(id, segments, true);
+          var mapping =
+              (tools.jackson.databind.node.ObjectNode)
+                  Json.read(Database.text(source, "mapping_json"));
+          mapping.put("documentType", "KNOWLEDGE");
+          sql.update("UPDATE sources SET mapping_json=? WHERE id=?", Json.write(mapping), id);
+          return Map.of(
+              "created",
+              created,
+              "preservedSegments",
+              protectedIds.size(),
+              "requiresNewRelease",
+              true);
+        });
+  }
+
+  private static String pageKey(String label) {
+    return label.split(" · ", 2)[0];
   }
 
   public void cancel(String id) {
@@ -268,8 +430,12 @@ public class SourceService {
             || "REFERENCE".equals(update.kind())
             || "UNCONFIRMED".equals(update.mastery())))
       throw ApiException.badRequest("CONFIRMATION_REQUIRED", "只能批准本人归属明确、类型与掌握范围已确认的记录");
+    if (update.approved() && KnowledgeDrafts.contents(update.content()))
+      throw ApiException.badRequest("CONTENTS_NOT_KNOWLEDGE", "该条是目录，缺少知识解释，请改选正文主题");
     long expected =
         update.revision() == null ? Database.number(record, "revision") : update.revision();
+    // 乐观锁示例：页面读取 revision=3，保存时必须仍为 3，成功后变成 4。
+    // 若另一页面已先保存，UPDATE 影响 0 行，返回 EDIT_CONFLICT，防止覆盖他人的新内容。
     // 条件写入把撤回校验与保存合并，防止校验之后发生撤回仍重新批准记录。
     if (db.app()
             .update(
@@ -290,6 +456,10 @@ public class SourceService {
           withdrawn ? "CANDIDATE_WITHDRAWN" : "EDIT_CONFLICT",
           withdrawn ? "该记录已永久撤回，不能再编辑或确认，请刷新资料" : "资料已被其他操作修改，请保留当前编辑并刷新核对");
     }
+    FlowLog.step(
+        "REVIEW",
+        "人工审阅已保存，修订号递增；批准后仍需发布才进入问答知识",
+        Map.of("approved", update.approved(), "revision", expected + 1));
     return expected + 1;
   }
 
@@ -301,6 +471,7 @@ public class SourceService {
                 clock.millis(),
                 id)
         != 1) throw ApiException.missing();
+    FlowLog.step("REVIEW", "资料已永久撤回，检索和最终答案检查都会排除它", Map.of());
   }
 
   public List<Map<String, Object>> sources() {
@@ -316,6 +487,21 @@ public class SourceService {
             db.app(),
             "SELECT id,name,format,status,mapping_json,error_code FROM sources WHERE id=?",
             id);
+    var mapping = Json.read(Database.text(source, "mapping_json"));
+    source.put("processingMode", mapping.path("processingMode").asText("LOCAL"));
+    source.put("documentType", mapping.path("documentType").asText("PERSONAL"));
+    var candidates =
+        db.app()
+            .queryForList(
+                "SELECT c.* FROM candidates c JOIN segments s ON s.id=c.segment_id WHERE c.source_id=? ORDER BY s.ordinal,c.rowid",
+                id);
+    candidates.forEach(
+        c ->
+            c.put(
+                "reviewWarning",
+                KnowledgeDrafts.contents(Database.text(c, "content"))
+                    ? "这是目录索引，缺少知识正文，请撤回并改选正文主题。"
+                    : ""));
     return Map.of(
         "source",
         source,
@@ -325,7 +511,11 @@ public class SourceService {
                 "SELECT id,ordinal,label,speaker,content FROM segments WHERE source_id=? ORDER BY ordinal",
                 id),
         "candidates",
+        candidates,
+        "jobs",
         db.app()
-            .queryForList("SELECT * FROM candidates WHERE source_id=? ORDER BY updated_at,id", id));
+            .queryForList(
+                "SELECT id,type,status,stage,error_code,cursor,created_at,updated_at FROM jobs WHERE subject_id=? ORDER BY created_at DESC,id DESC LIMIT 10",
+                id));
   }
 }

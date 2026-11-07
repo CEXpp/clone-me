@@ -61,6 +61,7 @@ public class ProfileService {
   }
 
   public long save(Edit edit) {
+    // 公开资料用于页面展示，写入 settings；不会自动创建 candidates 或问答用的发布快照。
     for (Link link : edit.contacts()) checkLink(link, false);
     for (Link link : edit.filings()) checkLink(link, true);
     for (Project project : edit.projects())
@@ -75,6 +76,7 @@ public class ProfileService {
         sql -> {
           sql.update("INSERT OR IGNORE INTO settings(key,value) VALUES('profile.revision','0')");
           long next = edit.revision() + 1;
+          // 修订号与公开正文在同一事务里更新，防止两个编辑页面互相静默覆盖。
           if (sql.update(
                   "UPDATE settings SET value=? WHERE key='profile.revision' AND value=?",
                   Long.toString(next),

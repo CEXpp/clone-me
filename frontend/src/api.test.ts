@@ -25,7 +25,7 @@ describe("请求安全与防止重复计费", () => {
       .fn()
       .mockResolvedValue(json({ token: null, headerName: "X-XSRF-TOKEN" }));
     vi.stubGlobal("fetch", fetch);
-    await expect(api("/api/admin/sources", "POST", {})).rejects.toMatchObject({
+    await expect(api("/api/admin/notes", "POST", {})).rejects.toMatchObject({
       code: "CSRF_UNAVAILABLE",
     });
     expect(fetch).toHaveBeenCalledTimes(1);
@@ -104,7 +104,7 @@ describe("请求安全与防止重复计费", () => {
     vi.stubGlobal("fetch", fetch);
     const data = new FormData();
     data.set("file", new Blob(["fixture"]), "note.txt");
-    await api("/api/admin/sources", "POST", data);
+    await api("/api/admin/notes", "POST", data);
     expect(fetch.mock.calls[1][1].body).toBe(data);
     expect(fetch.mock.calls[1][1].headers.has("Content-Type")).toBe(false);
   });
@@ -119,14 +119,14 @@ describe("请求安全与防止重复计费", () => {
     );
     await expect(api("/api/public/session")).rejects.toBeInstanceOf(ApiError);
     expect(expired).toBe(0);
-    await expect(api("/api/admin/sources")).rejects.toBeInstanceOf(ApiError);
+    await expect(api("/api/admin/notes")).rejects.toBeInstanceOf(ApiError);
     expect(expired).toBe(1);
   });
 });
 describe("管理员路由守卫", () => {
   it("未认证的直接后台访问进入登录页", async () => {
     expect(
-      await adminDestination("/admin/sources", async () => {
+      await adminDestination("/admin/notes", async () => {
         throw new Error("401");
       }),
     ).toBe("/admin/login");
@@ -155,7 +155,7 @@ describe("管理员路由守卫", () => {
   });
   it("已有会话跳过登录表单进入后台，访客页面不要求认证", async () => {
     expect(await adminDestination("/admin/login", async () => ({}))).toBe(
-      "/admin/sources",
+      "/admin/notes",
     );
     const verify = vi.fn();
     expect(await adminDestination("/", verify)).toBe(true);

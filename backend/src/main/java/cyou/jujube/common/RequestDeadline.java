@@ -5,6 +5,7 @@ import java.time.Duration;
 /** 当前同步请求的总时限；各外部调用只获得剩余时间，不为每个阶段重置总预算。 */
 public final class RequestDeadline implements AutoCloseable {
   private static final ThreadLocal<Long> END = new ThreadLocal<>();
+  // ThreadLocal 为当前同步执行线程保留总截止时刻；它不会自动传给另起的异步线程。
   private final Long previous;
 
   private RequestDeadline(Duration duration) {
@@ -33,6 +34,7 @@ public final class RequestDeadline implements AutoCloseable {
 
   @Override
   public void close() {
+    // 实现 AutoCloseable 后可用于 try (...)；无论正常还是异常离开，都会恢复原有时限。
     if (previous == null) END.remove();
     else END.set(previous);
   }

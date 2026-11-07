@@ -51,7 +51,7 @@ jobs:
         working-directory: frontend
         run: |
           npm audit --omit=dev --audit-level=high
-          # Build-only Tailwind 3 findings are reviewed in docs/security.md.
+          # Build-only Tailwind 3 findings are reviewed in docs/部署与备份.md.
           npm audit --json > ../backend/target/npm-build-audit.json || test "$?" -eq 1
       - name: Generate and scan runtime SBOM
         run: |

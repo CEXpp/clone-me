@@ -158,7 +158,7 @@ class OperationsSafetyTest {
     var source = RuntimeConfig.sqlite(root.resolve("app.db").toString());
     db.app().update("UPDATE schema_migrations SET checksum='changed' WHERE version=2");
     assertThrows(IllegalStateException.class, () -> SchemaMigrations.migrate(source, "app"));
-    db.app().update("DELETE FROM schema_migrations WHERE version=2");
+    db.app().update("DELETE FROM schema_migrations WHERE version>=2");
     db.app().update("INSERT INTO schema_migrations VALUES(99,'future',0)");
     assertThrows(IllegalStateException.class, () -> SchemaMigrations.migrate(source, "app"));
   }
@@ -166,7 +166,7 @@ class OperationsSafetyTest {
   @Test
   void migrationFailureRollsBackSchemaAndDoesNotMarkVersionApplied() throws Exception {
     var source = RuntimeConfig.sqlite(root.resolve("app.db").toString());
-    db.app().update("DELETE FROM schema_migrations WHERE version=2");
+    db.app().update("DELETE FROM schema_migrations WHERE version>=2");
     // V2 再次增加已有列会失败，必须保持原版本记录且不执行后面的迁移。
     assertThrows(Exception.class, () -> SchemaMigrations.migrate(source, "app"));
     assertEquals(1, SchemaMigrations.version(db.app()));

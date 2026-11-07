@@ -54,6 +54,7 @@ function unlock() {
   previous?.focus();
 }
 watch(
+  // 监听父组件 open 状态，而非一直显示；nextTick 后弹窗节点才可取得焦点。
   () => props.open,
   async (open) => {
     if (open) {

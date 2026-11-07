@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" fill="none">
+  <defs>
+    <linearGradient id="heart-ribbon" x1="8" y1="8" x2="39" y2="41" gradientUnits="userSpaceOnUse"><stop stop-color="#c9f8ff"/><stop offset=".4" stop-color="#7de3ff"/><stop offset="1" stop-color="#447fdc"/></linearGradient>
+    <linearGradient id="heart-fold" x1="24" y1="14" x2="26" y2="40" gradientUnits="userSpaceOnUse"><stop stop-color="#9beaff"/><stop offset="1" stop-color="#2f68b7" stop-opacity=".15"/></linearGradient>
+  </defs>
+  <path d="M24 40C19 35.8 5.5 26 5.5 16.5C5.5 7.6 16.7 5 24 14.2C31.3 5 42.5 7.6 42.5 16.5C42.5 26 29 35.8 24 40Z" stroke="url(#heart-ribbon)" stroke-width="3" stroke-linejoin="round" fill="#6ecaff08"/>
+  <path d="M24 14.2C29.5 20.4 33 24.1 28.4 31.6L24 40" stroke="url(#heart-fold)" stroke-width="2" stroke-linecap="round"/>
+</svg>

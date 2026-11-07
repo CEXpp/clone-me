@@ -63,6 +63,7 @@ async function saveDecision() {
   });
 }
 async function reconcile() {
+  // 这里填写“人民币元”，后端将 actualCny 转为微元；接口返回的账本金额则已经是微元。
   await run(async () => {
     const value = Number(actual.value);
     if (
@@ -148,6 +149,12 @@ onMounted(() => run(load));
           </p>
           <p class="eyebrow !tracking-normal break-all">
             指纹：{{ providers.embedding.fingerprint }}
+          </p>
+          <p class="text-sm">
+            专用重排 · {{ providers.rerank.model }}
+            <span class="tag">{{
+              providers.rerank.configured ? "已配置" : "未配置"
+            }}</span>
           </p>
           <p class="muted">
             凭据由服务器环境变量配置，管理页面不保存 API 密钥。

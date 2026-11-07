@@ -3,6 +3,7 @@
  * 真实管理员登录表单，提交密码与动态口令或一次性恢复码。
  * 登录后刷新防伪状态再进入管理台，不在浏览器保存口令或伪造登录标记。
  */
+import { debugFlow } from "../debug";
 import { ref } from "vue";
 import { useRouter } from "vue-router";
 import { api, refreshCsrf, resetCsrf } from "../api";
@@ -13,7 +14,10 @@ const username = ref(""),
   password = ref(""),
   code = ref(""),
   recovery = ref(false);
+/** 登录数据仅通过 API 提交；日志不输出账号、密码和动态验证码。 */
 async function login() {
+  debugFlow("ADMIN", "开始提交管理员登录");
+  // 输入框由 ref 绑定；await 顺序保证登录完成、CSRF 刷新后才进入需要身份的管理页面。
   await run(async () => {
     await api("/api/auth/login", "POST", {
       username: username.value,

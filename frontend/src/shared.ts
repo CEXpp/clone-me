@@ -6,6 +6,7 @@ import { onBeforeUnmount, onMounted, ref } from "vue";
 import { onBeforeRouteLeave } from "vue-router";
 import { ApiError } from "./api";
 import { authNavigation } from "./auth";
+import { debugFlow } from "./debug";
 export const toast = ref("");
 let toastTimer: ReturnType<typeof setTimeout>;
 export function notify(message: string) {
@@ -22,18 +23,28 @@ export function errorText(error: unknown) {
 }
 /** 把按钮忙碌态、异常提示和 finally 复位统一封装，防止用户连点导致重复提交。 */
 export function useAction() {
+  // 每次调用都创建本页面自己的 busy/error；ref.value 改变后，依赖它的模板自动更新。
   const busy = ref(false),
     error = ref("");
   async function run<T>(work: () => Promise<T>): Promise<T | undefined> {
-    if (busy.value) return;
+    if (busy.value) {
+      debugFlow("ACTION", "当前操作尚未结束，忽略重复点击");
+      return;
+    }
+    debugFlow("ACTION", "进入页面操作，设置忙碌状态并清除上次错误");
     busy.value = true;
     error.value = "";
     try {
-      return await work();
+      // work 是调用页面传来的异步函数；await 等待保存及刷新流程真正结束。
+      const result = await work();
+      debugFlow("ACTION", "页面操作正常完成");
+      return result;
     } catch (e) {
       error.value = errorText(e);
+      debugFlow("ACTION", "页面操作失败，已设置错误提示");
     } finally {
       busy.value = false;
+      debugFlow("ACTION", "解除忙碌状态，允许用户继续操作");
     }
   }
   return { busy, error, run };
@@ -53,21 +64,8 @@ export function useUnsaved(isDirty: () => boolean) {
   onMounted(() => window.addEventListener("beforeunload", prevent));
   onBeforeUnmount(() => window.removeEventListener("beforeunload", prevent));
 }
-export const kindLabels: Record<string, string> = {
-  REFERENCE: "参考资料",
-  KNOWLEDGE: "知识范围",
-  EXPERIENCE: "个人经历",
-  VIEWPOINT: "观点",
-  STYLE: "表达样例",
-};
-export const masteryLabels: Record<string, string> = {
-  UNCONFIRMED: "未确认",
-  CONFIRMED: "明确确认",
-  STUDIED: "学过",
-  UNDERSTOOD: "理解",
-  USED: "用过",
-};
 export function money(n: unknown) {
+  // 接口数字单位是“微元”，1_000_000 微元才是 1 元；这里只格式化展示，不做账本计算。
   return "¥" + (Number(n || 0) / 1_000_000).toFixed(4);
 }
 export function date(n: unknown) {
@@ -119,6 +117,7 @@ export interface Profile {
   aiDisclosure?: string;
 }
 export const profile = ref<Profile>({
+  // 模块级 ref 在当前页面应用内共享；编辑表单另建副本，避免未保存草稿立刻影响展示区。
   displayName: "",
   headline: "",
   bio: "",

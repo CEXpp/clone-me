@@ -37,6 +37,7 @@ async function retryNotification(id: string) {
   });
 }
 async function create() {
+  // 手动点击才创建新备份；页面 load 只读列表和状态，刷新页面不会重复创建备份。
   await run(async () => {
     const result = await api<Backup>("/api/admin/backups", "POST", {});
     await load();

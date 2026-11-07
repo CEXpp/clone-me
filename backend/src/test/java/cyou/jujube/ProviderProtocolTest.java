@@ -253,4 +253,87 @@ class ProviderProtocolTest {
             .code());
     assertEquals(0, requests.get());
   }
+
+  SiliconFlowRerank reranker(String model, String price) {
+    return new SiliconFlowRerank(
+        new RerankProperties("fixture-key", base + "/v1", model, new java.math.BigDecimal(price)),
+        budget,
+        diagnostics);
+  }
+
+  @Test
+  void dedicatedRerankerUsesIndicesAndRecordsCurrentUsageEnvelope() {
+    responseBody =
+        "{\"results\":[{\"index\":0,\"relevance_score\":0.1},{\"index\":1,\"relevance_score\":0.9}],\"meta\":{\"tokens\":{\"input_tokens\":100}}}";
+    var result =
+        reranker("BAAI/bge-reranker-v2-m3", "-1")
+            .rank("rank", "索引", List.of("Java 内存", "Java 数据库索引"));
+    assertEquals(1, result.getFirst().index());
+    assertEquals("/v1/rerank", requestPath);
+    assertEquals("Bearer fixture-key", authorization);
+    var body = Json.read(requestBody);
+    assertEquals(2, body.path("top_n").asInt());
+    assertFalse(body.path("return_documents").asBoolean(true));
+    assertEquals(100, Database.number(lastCall(), "input_tokens"));
+    assertEquals(0, Database.number(lastCall(), "actual"));
+    assertEquals("RETRIEVAL_RERANK", lastCall().get("stage"));
+  }
+
+  @Test
+  void rerankerRejectsUnknownOrDuplicateIndicesWithoutRetry() {
+    for (String values :
+        List.of(
+            "{\"index\":99,\"relevance_score\":0.8}", "{\"index\":0.5,\"relevance_score\":0.8}")) {
+      responseBody = "{\"results\":[" + values + "]}";
+      assertEquals(
+          "RERANK_INVALID_RESPONSE",
+          assertThrows(
+                  ApiException.class,
+                  () -> reranker("BAAI/bge-reranker-v2-m3", "-1").rank("bad", "q", List.of("doc")))
+              .code());
+    }
+    responseBody =
+        "{\"results\":[{\"index\":0,\"relevance_score\":0.8},{\"index\":0,\"relevance_score\":0.6}]}";
+    assertThrows(
+        ApiException.class,
+        () -> reranker("BAAI/bge-reranker-v2-m3", "-1").rank("duplicate", "q", List.of("a", "b")));
+    assertEquals(3, requests.get());
+  }
+
+  @Test
+  void paidRerankerRequiresPricingAndKeepsReservationWhenUsageIsMissing() {
+    assertEquals(
+        "PRICING_REQUIRED",
+        assertThrows(
+                ApiException.class,
+                () -> reranker("Qwen/Qwen3-Reranker-0.6B", "-1").rank("price", "q", List.of("doc")))
+            .code());
+    assertEquals(0, requests.get());
+    responseBody = "{\"results\":[{\"index\":0,\"relevance_score\":0.8}]}";
+    reranker("Qwen/Qwen3-Reranker-0.6B", "1").rank("paid", "q", List.of("doc"));
+    assertEquals("UNCERTAIN", lastCall().get("status"));
+    assertTrue(Database.number(lastCall(), "reserved") > 0);
+  }
+
+  @Test
+  void rerankerOutageAndExpiredDeadlineNeverRetry() {
+    responseStatus = 503;
+    assertEquals(
+        "RERANK_HTTP_503",
+        assertThrows(
+                ApiException.class,
+                () -> reranker("BAAI/bge-reranker-v2-m3", "-1").rank("down", "q", List.of("doc")))
+            .code());
+    try (var deadline = RequestDeadline.start(java.time.Duration.ZERO)) {
+      assertEquals(
+          "REQUEST_TIMEOUT",
+          assertThrows(
+                  ApiException.class,
+                  () ->
+                      reranker("BAAI/bge-reranker-v2-m3", "-1")
+                          .rank("expired", "q", List.of("doc")))
+              .code());
+    }
+    assertEquals(1, requests.get());
+  }
 }

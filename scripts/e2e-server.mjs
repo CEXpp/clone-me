@@ -4,6 +4,7 @@ import { mkdir, readFile, writeFile, rm } from "node:fs/promises";
 import { resolve, dirname, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createServer } from "node:net";
+import { createServer as createHttpServer } from "node:http";
 
 // 只使用一次性数据库、测试管理员和空供应商配置，不调用真实模型或 SMTP。
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -18,7 +19,7 @@ await new Promise((ok, fail) => {
   probe.listen(port, "127.0.0.1", () => probe.close(ok));
 });
 await mkdir(data, { recursive: true });
-const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !/^(CLONE_|DEEPSEEK_|SILICONFLOW_|TYPESAFE_|DASHSCOPE_|BAILIAN_|TURNSTILE_|SPRING_)/.test(key)));
+const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !/^(CLONE_|DEEPSEEK_|SILICONFLOW_|RERANK_|TYPESAFE_|DASHSCOPE_|BAILIAN_|TURNSTILE_|SPRING_)/.test(key)));
 Object.assign(env, {
   PORT: String(port), CLONE_DATA_DIR: data, CLONE_LOG_FILE: resolve(data, "logs/app.jsonl"),
   CLONE_MASTER_KEY: randomBytes(32).toString("base64"), CLONE_ADMIN_USERNAME: "fixture_owner",
@@ -40,6 +41,7 @@ const codes = output.split(/\r?\n/).filter((line) => /^[A-Za-z0-9_-]{20}$/.test(
 if (codes.length !== 8) throw new Error("E2E recovery fixture was not generated");
 await writeFile(authFile, JSON.stringify({ username: env.CLONE_ADMIN_USERNAME, password: env.CLONE_ADMIN_PASSWORD, codes }));
 delete env.CLONE_ADMIN_PASSWORD;
+if (process.env.E2E_FRONTEND_DIR) env.SPRING_WEB_RESOURCES_STATIC_LOCATIONS = "file:" + resolve(process.env.E2E_FRONTEND_DIR).replaceAll("\\", "/") + "/";
 const child = java();
 child.stdout.on("data", () => {});
 child.stderr.on("data", () => {});
@@ -49,9 +51,20 @@ async function stop() {
   stopping = true;
   child.kill("SIGTERM");
 }
+// Playwright's Windows process-tree shutdown may leave Java alive. A local,
+// random test-only control URL lets teardown ask its actual parent to stop it.
+const controlToken = randomBytes(24).toString("hex");
+const control = createHttpServer((req,res) => {
+  if(req.method!=="POST" || req.url!=="/"+controlToken){res.writeHead(404).end();return;}
+  res.writeHead(200).end();void stop();
+});
+await new Promise(ok=>control.listen(0,"127.0.0.1",ok));
+await writeFile(resolve(cache,"e2e-control.json"),JSON.stringify({url:"http://127.0.0.1:"+control.address().port+"/"+controlToken,port}));
 process.once("SIGINT", stop);
 process.once("SIGTERM", stop);
 child.once("exit", async (code) => {
+  control.close();
+  await rm(resolve(cache,"e2e-control.json"),{force:true});
   await rm(authFile, { force: true });
   if (data.startsWith(cache + sep)) await rm(data, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
   process.exit(stopping ? 0 : (code || 1));

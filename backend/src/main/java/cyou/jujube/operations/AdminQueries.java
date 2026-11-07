@@ -91,6 +91,7 @@ public class AdminQueries {
       }
     }
     var rows =
+        // 每页展示 50 项，多取第 51 项只是判断“还有下一页”，不把它包含在当前页。
         db.app()
             .query(
                 "SELECT "
@@ -103,6 +104,8 @@ public class AdminQueries {
                 args.toArray());
     String next = "";
     if (rows.size() > 50) {
+      // 游标保存最后一条已展示记录的时间和 id，下一页从它之后读取，比 OFFSET 更稳定。
+      // Base64 只是编码；访问权限仍依靠管理员认证，不依靠游标保密。
       T last = rows.get(49);
       String id = last instanceof Job job ? job.id() : ((Call) last).id();
       long created = last instanceof Job job ? job.created_at() : ((Call) last).created_at();

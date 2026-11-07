@@ -20,6 +20,8 @@ import org.springframework.web.bind.annotation.*;
 /** 访客接口层，提供公开介绍、风险验证配置、隔离会话和问答。 负责从 Cookie 取会话令牌并转交服务层；续期 Cookie 与数据库过期时间随有效问答同步。 */
 @RestController
 public class PublicController {
+  // @RestController 将方法返回值序列化为 HTTP 响应（此处通常为 JSON）。
+  // 下方构造器由 Spring 调用并注入服务；控制器负责接收请求，业务步骤交给服务执行。
   private final VisitorSessions sessions;
   private final ChatService chat;
   private final CloneProperties props;
@@ -66,6 +68,7 @@ public class PublicController {
 
   @GetMapping("/api/public/profile")
   Object profile() {
+    // 公开介绍来自 profile.public 设置；聊天知识来自发布快照，这是两条独立的数据路径。
     var value =
         new java.util.LinkedHashMap<>(
             Json.map(
@@ -118,6 +121,9 @@ public class PublicController {
 
   public record Question(String message, String challengeToken, String requestKey) {}
 
+  // record 是一组有名字的字段；@RequestBody 会把请求 JSON 转成这个 Java 对象。
+  // requestKey 对应一次提问意图，requestId 对应一次 HTTP 请求，不能互相替代。
+
   @PostMapping("/api/public/chat")
   ChatService.Answer ask(
       @RequestBody Question body, HttpServletRequest request, HttpServletResponse response) {
@@ -135,6 +141,7 @@ public class PublicController {
 
   @GetMapping("/api/public/requests/{key}")
   ChatService.Answer result(@PathVariable String key, HttpServletRequest request) {
+    // 断网后用 GET 查询已保存的结果，不再发起模型生成；仍需当前访客 Cookie 校验归属。
     return sessions.result(token(request), key);
   }
 

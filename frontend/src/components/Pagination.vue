@@ -1,4 +1,5 @@
 <script setup lang="ts">
+// props 由父页传入，emit 通知父页翻页；这个组件只显示按钮，不自行请求 API 或保存游标。
 defineProps<{ page: number; hasNext: boolean; busy: boolean }>();
 defineEmits<{ next: []; back: [] }>();
 </script>

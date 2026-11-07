@@ -1,6 +1,7 @@
 package cyou.jujube.quota;
 
 import cyou.jujube.common.ApiException;
+import cyou.jujube.common.FlowLog;
 import cyou.jujube.config.CloneProperties;
 import cyou.jujube.storage.Database;
 import java.math.BigDecimal;
@@ -39,6 +40,8 @@ public class BudgetService {
   /** 单价按每百万词元的人民币金额传入，相乘后得到微元；向上取整，避免低估费用。 */
   public static long estimate(
       BigDecimal inputPrice, BigDecimal outputPrice, long input, long output) {
+    // 例如输入单价 2 元/百万 token、输入 1000 token：费用为 0.002 元，也就是 2000 微元。
+    // “除以百万 token”和“元转微元”相互抵消，所以此处单价乘 token 数直接得到微元。
     if (inputPrice == null
         || outputPrice == null
         || inputPrice.signum() < 0
@@ -54,6 +57,8 @@ public class BudgetService {
   /** 通过带预算条件的 UPDATE 原子增加预留额，再写调用记录；事务期间不执行远程请求。 */
   public synchronized Reservation reserve(
       String requestId, String stage, String provider, String model, long maximum) {
+    FlowLog.step(
+        "BUDGET", "开始预留预算，金额单位为微元；一元等于一百万微元", Map.of("stage", stage, "maximumMicros", maximum));
     if (maximum < 0) throw new IllegalArgumentException("Negative reservation");
     if (maximum > 0 && !Boolean.parseBoolean(db.setting("ai.paid-enabled", "true")))
       throw ApiException.unavailable("PAID_CALLS_PAUSED", "管理员暂时暂停了 AI 付费调用，可以继续浏览个人介绍");
@@ -71,6 +76,8 @@ public class BudgetService {
                   maximum,
                   micros(props.dailyBudgetCny()));
           if (updated == 0) {
+            // 先正常返回 null 以提交额度告警；require 在事务结束后再抛预算不足错误。
+            // 若在这个事务回调中直接抛异常，刚写的通知也会随事务一起回滚。
             sql.update(
                 "INSERT OR IGNORE INTO notification_events(id,kind,subject,body,created_at) VALUES(?,?,?,?,?)",
                 "budget:" + day,
@@ -97,6 +104,7 @@ public class BudgetService {
   public Reservation require(
       String requestId, String stage, String provider, String model, long maximum) {
     Reservation result = reserve(requestId, stage, provider, model, maximum);
+    FlowLog.step("BUDGET", "预算预留检查完成", Map.of("allowed", result != null));
     if (result == null)
       throw new ApiException(429, "DAILY_BUDGET_REACHED", "今天的 AI 问答额度暂时用尽，可以继续浏览项目介绍");
     return result;
@@ -118,7 +126,14 @@ public class BudgetService {
     db.transaction(
         sql -> {
           var call = Database.required(sql, "SELECT * FROM ai_calls WHERE id=?", reservation.id());
-          if (!"RESERVED".equals(call.get("status"))) return null;
+          if (!"RESERVED".equals(call.get("status"))) {
+            FlowLog.step("BUDGET", "该调用已处理，跳过重复结算", Map.of());
+            return null;
+          }
+          FlowLog.step(
+              "BUDGET",
+              "开始释放预留并累计实际费用；等待当前事务提交后生效",
+              Map.of("reservedMicros", reservation.maximum(), "actualMicros", actual));
           sql.update(
               "UPDATE ai_calls SET actual=?,status='SETTLED',input_tokens=?,output_tokens=?,duration_ms=? WHERE id=?",
               actual,
@@ -132,6 +147,7 @@ public class BudgetService {
               actual,
               call.get("day"));
           if (actual > reservation.maximum()) {
+            FlowLog.step("BUDGET", "实际费用超过预留，暂停后续付费调用并登记通知", Map.of());
             sql.update(
                 "INSERT INTO settings(key,value) VALUES('ai.paid-enabled','false') ON CONFLICT(key) DO UPDATE SET value='false'");
             sql.update(
@@ -158,6 +174,8 @@ public class BudgetService {
 
   /** 超时或异常时不能断言供应商未收费，标为待对账并继续占用预留额度。 */
   public void uncertain(Reservation reservation, String code, long duration) {
+    FlowLog.step("BUDGET", "调用结果不确定，保留预留额度并等待人工对账", Map.of("durationMs", duration));
+    // 不减少 budget_days.reserved：超时只是本地没收到确定结果，不能证明供应商没执行。
     db.app()
         .update(
             "UPDATE ai_calls SET status='UNCERTAIN',error_code=?,duration_ms=? WHERE id=? AND status='RESERVED'",

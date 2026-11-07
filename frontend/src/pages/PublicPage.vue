@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import VisitorWelcome from "../components/VisitorWelcome.vue";
+/** 访客页面负责展示；会话、发送、恢复和错误状态集中在 useVisitorChat 中，便于沿调用链阅读。 */
 import { profile, date, safeUrl } from "../shared";
 import { useVisitorChat } from "../composables/useVisitorChat";
 import Drawer from "../components/Drawer.vue";
@@ -33,6 +35,7 @@ const {
   copy,
   keydown,
 } = useVisitorChat();
+// 解构得到的仍是 ref 或函数；模板通过 v-model 编辑输入，通过 @submit 等事件调用 send。
 </script>
 <template>
   <div
@@ -54,6 +57,7 @@ const {
   <main
     class="public-main relative flex flex-col justify-between max-w-3xl w-full mx-auto px-4 sm:px-6"
   >
+    <VisitorWelcome class="self-end mt-4" />
     <div
       v-if="session"
       class="flex flex-wrap items-center justify-between gap-2 py-4 border-b border-slate-200/70 text-[11px] text-slate-500"

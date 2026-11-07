@@ -20,6 +20,8 @@ public final class TextIndex {
       if (token
           .codePoints()
           .allMatch(cp -> Character.UnicodeScript.of(cp) == Character.UnicodeScript.HAN)) {
+        // 例如“数据库”产生“数、据、库、数据、据库、数据库”。这是字符片段，非词典分词。
+        // 使用 Unicode 码点而非逐个 char，避免把一个补充平面汉字切成两个代理字符。
         int[] codepoints = token.codePoints().toArray();
         for (int n = 1; n <= 3; n++)
           for (int start = 0; start + n <= codepoints.length; start++)
@@ -70,6 +72,7 @@ public final class TextIndex {
       aa += (double) a[i] * a[i];
       bb += (double) b[i] * b[i];
     }
+    // 余弦相似度 = 点积 / 两个向量长度之积；它表示方向接近程度，不是回答正确的概率。
     return aa == 0 || bb == 0 ? 0 : dot / Math.sqrt(aa * bb);
   }
 }

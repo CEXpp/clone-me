@@ -64,6 +64,7 @@ onMounted(async () => {
   }
 });
 onBeforeUnmount(() => {
+  // 网络脚本可能晚于组件卸载才加载完成；disposed 使前面的异步回调不再渲染过时实例。
   disposed = true;
   if (widget) window.turnstile?.remove(widget);
 });

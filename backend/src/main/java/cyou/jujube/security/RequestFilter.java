@@ -1,5 +1,6 @@
 package cyou.jujube.security;
 
+import cyou.jujube.common.FlowLog;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.Cookie;
@@ -34,13 +35,27 @@ public class RequestFilter extends OncePerRequestFilter {
     MDC.put("requestId", requestId);
     response.setHeader("X-Request-Id", requestId);
     long started = System.nanoTime();
+    // 只记录方法和接口路径，不记录查询参数、请求体、Cookie 或请求头。
+    FlowLog.step(
+        "HTTP",
+        "收到请求，准备恢复身份并进入过滤器链",
+        java.util.Map.of(
+            "method", request.getMethod(), "path", FlowLog.path(request.getRequestURI())));
+    boolean completed = false;
     try {
       if (auth.authenticated(cookie(request, "CLONE_ADMIN")))
         SecurityContextHolder.getContext()
             .setAuthentication(
                 new UsernamePasswordAuthenticationToken(
                     "owner", null, List.of(new SimpleGrantedAuthority("ROLE_ADMIN"))));
+      FlowLog.step(
+          "AUTH",
+          "身份检查完成，继续执行安全规则与控制器",
+          java.util.Map.of(
+              "admin", SecurityContextHolder.getContext().getAuthentication() != null));
       chain.doFilter(request, response);
+      completed = true;
+      // chain 表示继续执行后续过滤器及控制器；finally 在正常返回和异常时都会执行。
     } finally {
       if (!"GET".equals(request.getMethod())
           && (request.getRequestURI().startsWith("/api/admin/")
@@ -64,7 +79,19 @@ public class RequestFilter extends OncePerRequestFilter {
               "stage=ADMIN event=AUDIT_WRITE_FAILED errorType={}", ex.getClass().getSimpleName());
         }
       }
+      // 未捕获异常抛出时，容器可能尚未把状态码改为 500，因此额外记录链是否正常返回。
+      FlowLog.step(
+          "HTTP",
+          "本次过滤器链结束",
+          java.util.Map.of(
+              "status",
+              response.getStatus(),
+              "completed",
+              completed,
+              "durationMs",
+              (System.nanoTime() - started) / 1_000_000));
       MDC.clear();
+      // 线程会被复用，必须清掉本次编号，防止下一次请求日志串到上一个访客的链路。
     }
   }
 

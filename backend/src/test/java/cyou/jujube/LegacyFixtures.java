@@ -6,6 +6,16 @@ import java.util.List;
 /** 构造真实的无迁移记录旧库形状，而不是篡改一个声称已经升级的新库。 */
 final class LegacyFixtures {
   static void app(Database db) {
+    for (String table :
+        List.of(
+            "notes_fts",
+            "note_chunks",
+            "note_chunk_parents",
+            "note_assets",
+            "note_history",
+            "notes",
+            "note_sections",
+            "notebooks")) db.app().execute("DROP TABLE IF EXISTS " + table);
     for (String index :
         List.of(
             "idx_jobs_active_subject",
