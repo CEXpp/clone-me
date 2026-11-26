@@ -1,0 +1,64 @@
+limit_req_zone $binary_remote_addr zone=clone_api:1m rate=5r/s;
+limit_req_zone $binary_remote_addr zone=clone_login:1m rate=8r/m;
+server {
+    listen 80 default_server;
+    server_name _;
+    return 444;
+}
+server {
+    listen 80;
+    server_name ${CLONE_DOMAIN};
+    location ^~ /.well-known/acme-challenge/ { root /var/www/certbot; }
+    location / { return 308 https://${CLONE_DOMAIN}$request_uri; }
+}
+server {
+    listen 443 ssl;
+    server_name ${CLONE_DOMAIN};
+    ssl_certificate /etc/letsencrypt/live/${CLONE_DOMAIN}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${CLONE_DOMAIN}/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_session_cache shared:TLS:1m;
+    add_header Strict-Transport-Security "max-age=31536000" always;
+    client_max_body_size 256k;
+    client_body_timeout 15s;
+    proxy_connect_timeout 3s;
+    proxy_read_timeout 90s;
+    proxy_send_timeout 15s;
+    proxy_buffering on;
+    # 只转发由当前 Nginx 确认的客户端地址，不拼接访客传入的转发头。
+    proxy_set_header Host ${CLONE_DOMAIN};
+    proxy_set_header X-Forwarded-For $remote_addr;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header Forwarded "";
+    location = /api/auth/login {
+        limit_req zone=clone_login burst=4 nodelay;
+        limit_req_status 429;
+        proxy_pass http://app:8080;
+    }
+    location = /api/admin/sources {
+        client_max_body_size 12m;
+        limit_req zone=clone_api burst=10 nodelay;
+        limit_req_status 429;
+        proxy_pass http://app:8080;
+    }
+    location = /api/public/chat {
+        client_max_body_size 16k;
+        limit_req zone=clone_api burst=10 nodelay;
+        limit_req_status 429;
+        proxy_pass http://app:8080;
+    }
+    location /api/ {
+        limit_req zone=clone_api burst=10 nodelay;
+        limit_req_status 429;
+        add_header Cache-Control "no-store" always;
+        proxy_pass http://app:8080;
+    }
+    location /assets/ {
+        proxy_pass http://app:8080;
+        add_header Cache-Control "public, max-age=31536000, immutable";
+    }
+    location / {
+        proxy_pass http://app:8080;
+        add_header Cache-Control "no-cache" always;
+    }
+}

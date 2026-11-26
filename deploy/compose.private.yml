@@ -1,0 +1,6 @@
+# 无域名时使用 SSH 隧道。Compose 2.24.4+ 的 !override 用于替换公网端口列表。
+services:
+  app:
+    pull_policy: never
+  nginx:
+    ports: !override ['127.0.0.1:18443:443']

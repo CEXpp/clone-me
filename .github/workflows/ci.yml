@@ -1,0 +1,143 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Verify and package
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: maven
+          cache-dependency-path: backend/pom.xml
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci --no-audit --no-fund
+      - name: Check frontend formatting, types and tests
+        working-directory: frontend
+        run: npm run check
+      - name: Build frontend assets
+        working-directory: frontend
+        run: npm run build
+      - name: Check backend formatting
+        working-directory: backend
+        run: mvn -B -ntp -Pformat fmt:check
+      - name: Test and package application
+        working-directory: backend
+        run: mvn -B -ntp verify
+      - name: Test offline evaluation metrics and snapshot isolation
+        run: python3 -m unittest discover -s scripts -p 'test_*eval*.py' -v
+      - name: Run fictional RAG evaluation without model calls
+        run: python3 scripts/evaluate.py --demo --output .cache/ci-evaluation
+      - name: Check runtime dependency vulnerabilities
+        working-directory: frontend
+        run: |
+          npm audit --omit=dev --audit-level=high
+          # Keep the build-time dependency report alongside the runtime audit.
+          npm audit --json > ../backend/target/npm-build-audit.json || test "$?" -eq 1
+      - name: Generate and scan runtime SBOM
+        run: |
+          cd backend
+          mvn -B -ntp -Psbom cyclonedx:makeAggregateBom
+          cd ..
+          python3 scripts/check-sbom.py backend/target/bom.json --output backend/target/maven-security.json
+      - name: Check deployment scripts and isolated HTTPS container
+        timeout-minutes: 6
+        run: |
+          for script in scripts/*.sh; do bash -n "$script"; done
+          python3 scripts/evaluate.py --cases eval/cases.example.jsonl
+          bash scripts/freeze-images.sh
+          bash scripts/build-image.sh clone-me:ci
+          bash scripts/container-smoke.sh clone-me:ci
+      - name: Install pinned browser on the provisioned Ubuntu runner
+        timeout-minutes: 5
+        working-directory: frontend
+        # ubuntu-latest already supplies Chrome's shared libraries. E2E must
+        # successfully launch Chromium; missing libraries still fail the job.
+        # A minimal self-hosted runner must provision install --with-deps first.
+        run: npx playwright install chromium
+      - name: Test real packaged application in desktop and mobile browsers
+        timeout-minutes: 5
+        working-directory: frontend
+        run: npm run test:e2e
+      - name: Retain verified application and reports
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: verification-${{ github.sha }}
+          retention-days: 14
+          include-hidden-files: true
+          path: |
+            backend/target/clone-me-0.1.0-SNAPSHOT.jar
+            backend/target/bom.json
+            backend/target/*security.json
+            backend/target/npm-build-audit.json
+            backend/target/surefire-reports/*.xml
+            frontend/test-results/
+            deploy/.images.env
+
+  verify-atelier:
+    name: Verify and package Atelier
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: atelier-ui-v1/package-lock.json
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: maven
+          cache-dependency-path: backend/pom.xml
+      - name: Check and build Atelier
+        working-directory: atelier-ui-v1
+        run: |
+          npm ci --no-audit --no-fund
+          npm run check
+          npm run build
+          npm audit --omit=dev --audit-level=high
+      - name: Verify the Atelier release package
+        run: |
+          mvn -B -ntp -f backend/pom.xml -Patelier clean verify
+          cd backend/target
+          unzip -p clone-me-0.1.0-SNAPSHOT.jar BOOT-INF/classes/static/index.html | grep '<title>PRISM'
+          sha256sum clone-me-0.1.0-SNAPSHOT.jar > clone-me-0.1.0-SNAPSHOT.jar.sha256
+      - name: Check packaged backend and Atelier in Chromium
+        working-directory: atelier-ui-v1
+        run: |
+          npx playwright install chromium
+          npm run test:e2e
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: atelier-release-${{ github.sha }}
+          path: |
+            backend/target/clone-me-0.1.0-SNAPSHOT.jar
+            backend/target/clone-me-0.1.0-SNAPSHOT.jar.sha256

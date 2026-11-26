@@ -1,0 +1,14 @@
+[Unit]
+Description=Check and rotate Clone Me SSH tunnel TLS certificate
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/srv/clone-me/runtime
+ExecStart=/usr/bin/bash /srv/clone-me/runtime/scripts/private-certificates.sh renew
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+TimeoutStartSec=90

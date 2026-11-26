@@ -1,0 +1,393 @@
+/* A work surface for long reading sessions. Keep state colors semantic. */
+.admin-mode,
+.console-dialog {
+  --c-page: #0b111b;
+  --c-surface: #131e2c;
+  --c-raised: #1a293a;
+  --c-subtle: #0f1926;
+  --c-input: #0c1521;
+  --c-text: #e6eef8;
+  --c-muted: #a5b6cb;
+  --c-label: #b6c7da;
+  --c-border: #35485f;
+  --c-border-strong: #526c88;
+  --c-accent: #94d9ed;
+  --c-accent-ink: #092331;
+  --c-info-bg: #142d40;
+  --c-info-text: #bedced;
+  --c-info-border: #3b5e76;
+  --c-success-bg: #16332e;
+  --c-success-text: #b3e7d0;
+  --c-success-border: #3c6b5c;
+  --c-warning-bg: #342c1e;
+  --c-warning-text: #f0d192;
+  --c-warning-border: #72603b;
+  --c-danger-bg: #36232d;
+  --c-danger-text: #f4bac3;
+  --c-danger-border: #79515f;
+  color: var(--c-text);
+  color-scheme: dark;
+}
+.admin-mode {
+  background:
+    radial-gradient(ellipse at 80% 0, #15233866, transparent 55%), var(--c-page);
+}
+.admin-mode > .neural-header {
+  margin-bottom: 24px;
+}
+.admin-mode .console-layout {
+  padding-top: 15px;
+  padding-bottom: 56px;
+}
+.admin-mode .console-layout > header {
+  align-items: center;
+}
+.admin-mode h1,
+.admin-mode h2,
+.admin-mode h3,
+.console-dialog h1,
+.console-dialog h2,
+.console-dialog h3 {
+  color: var(--c-text);
+}
+:is(.admin-mode, .console-dialog) .panel {
+  background: var(--c-surface);
+  border: 1px solid var(--c-border);
+  color: var(--c-text);
+  border-radius: 12px;
+  box-shadow: 0 5px 20px #0000000d;
+}
+:is(.admin-mode, .console-dialog) .panel.surface-subtle {
+  background: var(--c-subtle);
+}
+:is(.admin-mode, .console-dialog) .panel .panel {
+  box-shadow: none;
+}
+:is(.admin-mode, .console-dialog) .field {
+  background: var(--c-input);
+  border: 1px solid var(--c-border-strong);
+  border-radius: 8px;
+  color: var(--c-text);
+  font-size: 13px;
+  line-height: 1.7;
+  min-height: 42px;
+  max-width: 100%;
+  transition:
+    border-color 0.2s,
+    box-shadow 0.2s;
+}
+:is(.admin-mode, .console-dialog) .field::placeholder {
+  color: #94a6bd;
+  opacity: 1;
+}
+:is(.admin-mode, .console-dialog) .field:focus {
+  border-color: var(--c-accent);
+  box-shadow: 0 0 0 3px #94d9ed14;
+}
+:is(.admin-mode, .console-dialog) .field:disabled {
+  opacity: 0.62;
+  cursor: not-allowed;
+}
+:is(.admin-mode, .console-dialog) .field option {
+  color: var(--c-text);
+  background: var(--c-surface);
+}
+:is(.admin-mode, .console-dialog) .field[type="file"] {
+  font-size: 12px;
+}
+:is(.admin-mode, .console-dialog) ::file-selector-button {
+  background: var(--c-raised);
+  color: var(--c-text);
+  border: 1px solid var(--c-border-strong);
+  border-radius: 5px;
+  padding: 5px 12px;
+  margin-right: 10px;
+  cursor: pointer;
+}
+:is(.admin-mode, .console-dialog)
+  :is(input[type="checkbox"], input[type="radio"]) {
+  accent-color: var(--c-accent);
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+}
+:is(.admin-mode, .console-dialog) :is(.btn, .btn-primary) {
+  background: var(--c-raised);
+  color: #c6d7e9;
+  border: 1px solid #49617d;
+  border-radius: 8px;
+  min-height: 42px;
+  padding: 9px 15px;
+  font-size: 12px;
+  line-height: 1.5;
+  font-weight: 500;
+  box-shadow: none;
+  transition:
+    background 0.18s,
+    color 0.18s,
+    border-color 0.18s,
+    box-shadow 0.18s;
+}
+:is(.admin-mode, .console-dialog) :is(.btn, .btn-primary):hover:not(:disabled) {
+  background: #243a50;
+  border-color: #7897b7;
+  color: #eef7ff;
+}
+:is(.admin-mode, .console-dialog)
+  :is(.btn, .btn-primary):active:not(:disabled) {
+  background: #2b455f;
+}
+:is(.admin-mode, .console-dialog) .btn-primary {
+  background: var(--c-accent);
+  color: var(--c-accent-ink);
+  border-color: #b4e9f7;
+  font-weight: 600;
+}
+:is(.admin-mode, .console-dialog) .btn-primary:hover:not(:disabled) {
+  background: #b2e9f7;
+  color: #061d29;
+  border-color: #d2f5ff;
+  box-shadow: 0 0 0 3px #94d9ed10;
+}
+:is(.admin-mode, .console-dialog) .btn-danger {
+  color: var(--c-danger-text);
+  background: #2b202a;
+  border-color: var(--c-danger-border);
+}
+:is(.admin-mode, .console-dialog) .btn-danger:hover:not(:disabled) {
+  color: #ffdee3;
+  background: #482b38;
+  border-color: #ba7c8d;
+}
+:is(.admin-mode, .console-dialog) button:disabled {
+  opacity: 0.48;
+  cursor: not-allowed;
+}
+:is(.admin-mode, .console-dialog) :focus-visible {
+  outline: 2px solid var(--c-accent);
+  outline-offset: 3px;
+}
+.admin-mode .console-tabs {
+  gap: 8px;
+  padding-bottom: 16px;
+  border-color: var(--c-border);
+  scrollbar-width: thin;
+}
+.admin-mode .console-tabs .btn {
+  background: transparent;
+  border-color: transparent;
+  color: var(--c-muted);
+}
+.admin-mode .console-tabs .btn:hover {
+  background: var(--c-raised);
+  color: var(--c-text);
+}
+.admin-mode .console-tabs .console-tab-active {
+  background: #19394d;
+  border-color: #638da4;
+  color: #d0f2ff;
+  box-shadow: inset 0 -2px 0 var(--c-accent);
+}
+.admin-mode .console-tabs .console-tab-active span {
+  opacity: 1;
+  color: var(--c-accent);
+}
+:is(.admin-mode, .console-dialog) .muted,
+:is(.admin-mode, .console-dialog) .field-label,
+:is(.admin-mode, .console-dialog) .text-slate-500,
+:is(.admin-mode, .console-dialog) .text-slate-600 {
+  color: var(--c-muted);
+}
+:is(.admin-mode, .console-dialog) .muted {
+  font-size: 12px;
+  line-height: 1.85;
+}
+:is(.admin-mode, .console-dialog) .field-label {
+  font-size: 12px;
+  line-height: 1.7;
+  margin-bottom: 6px;
+  color: var(--c-label);
+}
+:is(.admin-mode, .console-dialog) .eyebrow,
+:is(.admin-mode, .console-dialog) .text-slate-400 {
+  color: #9fb2cb;
+}
+:is(.admin-mode, .console-dialog) .eyebrow {
+  font-size: 10px;
+  line-height: 1.8;
+}
+:is(.admin-mode, .console-dialog) .tag {
+  background: #203247;
+  border: 1px solid #435b75;
+  color: #c4d8ee;
+  border-radius: 5px;
+  padding: 4px 8px;
+  line-height: 1.5;
+}
+:is(.admin-mode, .console-dialog) .status-success {
+  background: var(--c-success-bg);
+  color: var(--c-success-text);
+  border-color: var(--c-success-border);
+}
+:is(.admin-mode, .console-dialog) .status-warning {
+  background: var(--c-warning-bg);
+  color: var(--c-warning-text);
+  border-color: var(--c-warning-border);
+}
+:is(.admin-mode, .console-dialog) .status-neutral {
+  background: #253a4d;
+  color: #c9e2f4;
+  border-color: #507087;
+}
+.badge-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+  margin-right: 7px;
+}
+:is(.admin-mode, .console-dialog) .notice {
+  background: var(--c-info-bg);
+  border: 1px solid var(--c-info-border);
+  color: var(--c-info-text);
+  border-radius: 8px;
+  font-size: 12px;
+  line-height: 1.85;
+  padding: 13px 15px;
+}
+:is(.admin-mode, .console-dialog) .error {
+  background: var(--c-warning-bg);
+  border: 1px solid var(--c-warning-border);
+  color: var(--c-warning-text);
+  border-radius: 8px;
+  line-height: 1.85;
+}
+:is(.admin-mode, .console-dialog) .text-amber-700 {
+  color: var(--c-warning-text);
+}
+:is(.admin-mode, .console-dialog) .border-slate-200 {
+  border-color: var(--c-border);
+}
+:is(.admin-mode, .console-dialog) .empty {
+  color: var(--c-muted);
+  border: 1px dashed var(--c-border);
+  border-radius: 8px;
+  padding: 36px 20px;
+}
+:is(.admin-mode, .console-dialog) .prose-text {
+  line-height: 1.95;
+  overflow-wrap: anywhere;
+}
+:is(.admin-mode, .console-dialog) .record-approved {
+  border-color: var(--c-success-border);
+  box-shadow: inset 3px 0 var(--c-success-border);
+}
+:is(.admin-mode, .console-dialog) .record-withdrawn {
+  border-style: dashed;
+  color: var(--c-muted);
+}
+:is(.admin-mode, .console-dialog) .surface-code {
+  background: var(--c-input);
+  color: #c8ddef;
+  border: 1px solid var(--c-border);
+}
+.admin-mode .source-toolbar {
+  align-items: center;
+}
+.admin-mode .source-picker {
+  flex: 1 1 330px;
+  min-width: 0;
+}
+.admin-mode .source-picker select {
+  flex: 1;
+  min-width: 0;
+  max-width: 400px;
+}
+.admin-mode .source-toolbar-actions {
+  align-items: center;
+}
+.console-dialog {
+  font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
+}
+.dialog-backdrop {
+  background: #020811b8;
+  backdrop-filter: blur(7px);
+}
+.console-dialog .dialog-panel {
+  background: var(--c-surface);
+  color: var(--c-text);
+  border: 1px solid var(--c-border-strong);
+  box-shadow: 0 25px 100px #0008;
+}
+.console-dialog .dialog-panel > header {
+  background: #182638;
+  border-bottom: 1px solid var(--c-border);
+}
+.console-dialog .dialog-panel > header h2 {
+  font-size: 15px;
+}
+.console-dialog .dialog-close {
+  width: 36px;
+  height: 36px;
+  min-height: 36px;
+  padding: 7px;
+  border-color: transparent;
+  background: transparent;
+}
+.console-dialog .dialog-close svg {
+  width: 18px;
+  height: 18px;
+}
+.console-dialog .dialog-close:hover {
+  background: #2b4159;
+}
+.console-dialog .safe-bottom {
+  padding-bottom: max(28px, env(safe-area-inset-bottom));
+}
+@media (max-width: 639px) {
+  .admin-mode > .neural-header {
+    margin-bottom: 15px;
+  }
+  .admin-mode .console-layout {
+    padding-top: 10px;
+  }
+  .admin-mode .console-layout > header {
+    align-items: start;
+  }
+  .admin-mode .console-layout h1 {
+    font-size: 18px;
+    line-height: 1.6;
+  }
+  .admin-mode .console-tabs {
+    margin-bottom: 20px;
+  }
+  .admin-mode .console-tabs .btn {
+    padding: 9px 12px;
+    font-size: 11px;
+  }
+  :is(.admin-mode, .console-dialog) .field {
+    font-size: 14px;
+  }
+  .admin-mode .source-picker {
+    flex-basis: 100%;
+  }
+  .admin-mode .source-picker label {
+    width: 100%;
+  }
+  .admin-mode .source-picker select {
+    width: 100%;
+    max-width: none;
+  }
+  .admin-mode .source-toolbar-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    width: 100%;
+    gap: 8px;
+  }
+  .admin-mode .source-toolbar-actions .btn-primary {
+    grid-column: 1/-1;
+  }
+  :is(.admin-mode, .console-dialog) :is(.btn, .btn-primary) {
+    padding: 9px 12px;
+  }
+}

@@ -1,0 +1,139 @@
+/* 构建时展开 Tailwind；基础规则、通用组件和页面装饰按层组织，便于学习时定位样式来源。 */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+/* 全站基础交互：键盘焦点必须可见，禁用按钮有明确状态，不依赖鼠标悬停才能操作。 */
+@layer base {
+  body {
+    @apply m-0 bg-white text-zinc-950 antialiased;
+    overflow-x: hidden;
+  }
+  button,
+  a,
+  input,
+  textarea,
+  select {
+    @apply focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-slate-700;
+  }
+  button:disabled {
+    @apply opacity-40 cursor-not-allowed;
+  }
+  textarea {
+    @apply resize-y;
+  }
+  ::selection {
+    @apply bg-zinc-900 text-white;
+  }
+}
+/* 可复用的按钮、输入框、面板与提示样式，页面用这些类保持原型的黑白和细边框风格。 */
+@layer components {
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 px-4 py-2 rounded-full border border-slate-200 bg-white text-xs font-medium text-slate-700 transition-colors hover:border-zinc-900 hover:text-zinc-950;
+  }
+  .btn-primary {
+    @apply btn border-zinc-950 bg-zinc-950 text-white hover:bg-zinc-800 hover:text-white;
+  }
+  .field {
+    @apply w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-zinc-950 focus:border-zinc-900;
+  }
+  .field-label {
+    @apply block mb-1.5 text-xs text-slate-500;
+  }
+  .panel {
+    @apply rounded-2xl border border-slate-200 bg-white p-4 sm:p-6;
+  }
+  .muted {
+    @apply text-xs leading-relaxed text-slate-500;
+  }
+  .eyebrow {
+    @apply font-mono text-[10px] uppercase tracking-widest text-slate-400;
+  }
+  .tag {
+    @apply inline-flex max-w-full items-center rounded-md bg-slate-100 px-2 py-1 text-[11px] font-mono text-slate-600 break-all;
+  }
+  .notice {
+    @apply rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs leading-relaxed text-slate-600;
+  }
+  .error {
+    @apply rounded-xl border border-amber-200 bg-amber-50/70 p-3 text-xs leading-relaxed text-amber-900 break-words;
+  }
+  .empty {
+    @apply py-12 text-center text-sm text-slate-400;
+  }
+  .section-title {
+    @apply text-base font-semibold tracking-tight;
+  }
+}
+/* 网格与输入框阴影均由本地 CSS 绘制，不需要额外图片或远程资源。 */
+.swiss-grid {
+  background-size: 48px 48px;
+  background-image:
+    linear-gradient(to right, rgba(226, 232, 240, 0.45) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(226, 232, 240, 0.45) 1px, transparent 1px);
+}
+.composer {
+  background: rgba(248, 250, 252, 0.92);
+  backdrop-filter: blur(20px);
+  border: 1px solid #e2e8f0;
+  box-shadow:
+    0 10px 35px -10px rgba(15, 23, 42, 0.06),
+    0 2px 8px -2px rgba(15, 23, 42, 0.03);
+  transition:
+    border-color 0.2s,
+    box-shadow 0.2s;
+}
+.composer:focus-within {
+  background: white;
+  border-color: #09090b;
+  box-shadow: 0 20px 45px -12px rgba(15, 23, 42, 0.1);
+}
+/* 模型答案作为纯文本展示，保留换行并允许长词折行，不把回答解析为可执行 HTML。 */
+.prose-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.85;
+}
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 9999px;
+}
+.safe-bottom {
+  padding-bottom: max(1rem, env(safe-area-inset-bottom));
+}
+/* 手机顶栏分两行，页面留白需使用相同高度，避免内容被固定导航遮住。 */
+@media (max-width: 639px) {
+  .topbar {
+    height: 98px;
+  }
+  .page-root {
+    padding-top: 98px;
+  }
+  .public-main {
+    min-height: calc(100dvh - 98px);
+  }
+}
+@media (min-width: 640px) {
+  .topbar {
+    height: 56px;
+  }
+  .page-root {
+    padding-top: 56px;
+  }
+  .public-main {
+    min-height: calc(100dvh - 56px);
+  }
+}
+/* 尊重系统减少动态效果的设置，关闭装饰动画和缓动。 */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
+}

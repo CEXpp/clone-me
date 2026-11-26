@@ -1,0 +1,10 @@
+[Unit]
+Description=Check Clone Me SSH tunnel TLS certificate twice a day
+
+[Timer]
+OnCalendar=*-*-* 00,12:20:00
+RandomizedDelaySec=10m
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,72 @@
+# 本地开发统一入口：测试、构建、运行和管理员初始化都从项目根目录调用。
+# 脚本只修改当前进程环境，不写机器全局配置；退出后恢复原工作目录。
+param(
+    [Parameter(Position = 0)]
+    [ValidateSet('Check', 'Test', 'Build', 'Run', 'InitAdmin', 'MasterKey', 'Format', 'FrontendDev')]
+    [string]$Action = 'Test',
+    [string]$EnvFile
+)
+$ErrorActionPreference = 'Stop'
+$taskRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
+Write-Host "[开发流程] 开始执行 $Action，正在准备项目环境。"
+if (-not $EnvFile) { $EnvFile = Join-Path $taskRoot '.env' }
+# 环境文件按纯文本处理，只允许项目认可的配置前缀，绝不点执行或调用表达式。
+if (Test-Path -LiteralPath $EnvFile) {
+    foreach ($line in Get-Content -LiteralPath $EnvFile -Encoding UTF8) {
+        if ($line -match '^\s*(#|$)') { continue }
+        if ($line -notmatch '^\s*([A-Z][A-Z0-9_]*)\s*=(.*)$') { throw 'Invalid .env line; use KEY=value.' }
+        $taskKey = $Matches[1]
+        $taskValue = $Matches[2].Trim()
+        if ($taskKey -notmatch '^(CLONE_|DEEPSEEK_|SILICONFLOW_|RERANK_|TYPESAFE_|DASHSCOPE_|BAILIAN_|TURNSTILE_|SPRING_MAIL_|DECISION_PROVIDER$|PORT$)') { throw "Unsupported environment key: $taskKey" }
+        if ($taskValue.Length -ge 2 -and (($taskValue.StartsWith('"') -and $taskValue.EndsWith('"')) -or ($taskValue.StartsWith("'") -and $taskValue.EndsWith("'")))) { $taskValue = $taskValue.Substring(1, $taskValue.Length - 2) }
+        [Environment]::SetEnvironmentVariable($taskKey, $taskValue, 'Process')
+    }
+}
+$taskPrevious = Get-Location
+try {
+    # 前端先构建到 dist，随后 Maven 把静态文件一起打入可执行 JAR。
+    if ($Action -in @('Check', 'Test', 'Build', 'Format', 'FrontendDev')) {
+        Write-Host '[开发流程] 进入前端目录，检查依赖并执行所选命令。'
+        Set-Location -LiteralPath (Join-Path $taskRoot 'frontend')
+        if (-not (Test-Path -LiteralPath 'node_modules')) { & npm ci --no-audit --no-fund; if ($LASTEXITCODE -ne 0) { throw 'Frontend dependency installation failed.' } }
+        switch ($Action) {
+            'Check' {
+                & npm run check
+                if ($LASTEXITCODE -ne 0) { throw 'Frontend checks failed.' }
+                & npm run build
+            }
+            'Test' { & npm test }
+            'Build' { & npm run build }
+            'Format' { & npm run format }
+            'FrontendDev' { & npm run dev }
+        }
+        if ($LASTEXITCODE -ne 0) { throw 'Frontend command failed.' }
+        if ($Action -eq 'FrontendDev') { return }
+    }
+    Set-Location -LiteralPath (Join-Path $taskRoot 'backend')
+    Write-Host '[开发流程] 进入后端目录，执行 Maven 或启动 Java 服务。'
+    # 直接调用 Maven，沿用开发者已有的 settings、镜像与本地仓库，不在项目中覆盖机器配置。
+    # 格式化工具独立放在 format 配置集中，普通编译和启动不需要解析它。
+    switch ($Action) {
+        'Check' {
+            & mvn -B -ntp -Pformat fmt:check
+            if ($LASTEXITCODE -ne 0) { throw 'Backend format check failed.' }
+            & mvn -B -ntp verify
+        }
+        'Test' { & mvn -B -ntp test }
+        'Build' { & mvn -B -ntp clean package }
+        'Format' { & mvn -B -ntp -Pformat fmt:format }
+        default {
+            $taskJar = Join-Path (Get-Location) 'target/clone-me-0.1.0-SNAPSHOT.jar'
+            if (-not (Test-Path -LiteralPath $taskJar)) { throw 'Run scripts/dev.ps1 Build first.' }
+            # 为小内存服务器提供初始内存边界；实际资源占用仍需部署后测量。
+            # SQLite 需要本地调用权限，显式启用以免新版 JDK 输出本地访问警告。
+            $taskJavaArgs = @('--enable-native-access=ALL-UNNAMED', '-Xms128m', '-Xmx512m', '-XX:MaxDirectMemorySize=128m', '-jar', $taskJar)
+            if ($Action -eq 'InitAdmin') { $taskJavaArgs += '--initialize-admin' }
+            if ($Action -eq 'MasterKey') { $taskJavaArgs += '--generate-master-key' }
+            & java @taskJavaArgs
+        }
+    }
+    if ($LASTEXITCODE -ne 0) { throw "$Action failed with exit code $LASTEXITCODE" }
+    Write-Host "[开发流程] $Action 执行完成。"
+} finally { Set-Location -LiteralPath $taskPrevious.Path }

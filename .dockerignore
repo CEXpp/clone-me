@@ -1,0 +1,4 @@
+**
+!backend/
+!backend/target/
+!backend/target/clone-me-0.1.0-SNAPSHOT.jar

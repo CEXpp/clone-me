@@ -1,0 +1,226 @@
+package cyou.jujube.operations;
+
+import cyou.jujube.common.ApiException;
+import cyou.jujube.common.FlowLog;
+import cyou.jujube.common.Json;
+import cyou.jujube.config.CloneProperties;
+import cyou.jujube.config.RuntimeConfig;
+import cyou.jujube.security.Crypto;
+import cyou.jujube.storage.Database;
+import cyou.jujube.storage.SchemaMigrations;
+import java.io.*;
+import java.nio.file.*;
+import java.time.Clock;
+import java.util.*;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipOutputStream;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.stereotype.Service;
+
+/**
+ * 创建本人资料的一致性备份，排除访客聊天库、管理员认证记录和环境密钥。 先用 SQLite 生成一致性数据库快照，在副本中脱敏，再和原始资料一起压缩。 备份最多保留七份且总量不超过
+ * 500MB；下载名称受白名单限制，防止任意路径读取。
+ */
+@Service
+public class BackupService {
+  private static final Logger LOG = LoggerFactory.getLogger(BackupService.class);
+  private static final long MAX_TOTAL = 500L * 1024 * 1024;
+  private final Database db;
+  private final CloneProperties props;
+  private final Clock clock;
+
+  public BackupService(Database db, CloneProperties props, Clock clock) {
+    this.db = db;
+    this.props = props;
+    this.clock = clock;
+  }
+
+  @Scheduled(cron = "0 0 3 * * *", zone = "Asia/Shanghai")
+  public void scheduled() {
+    try {
+      create();
+    } catch (Exception ex) {
+      String day = java.time.LocalDate.now(clock).toString();
+      db.app()
+          .update(
+              "INSERT OR IGNORE INTO notification_events(id,kind,subject,body,created_at) VALUES(?,?,?,?,?)",
+              "backup:" + day,
+              "BACKUP_FAILED",
+              "每日备份失败",
+              "请在管理后台检查备份与磁盘状态。",
+              clock.millis());
+      LOG.error("stage=BACKUP event=BACKUP_FAILED errorType={}", ex.getClass().getSimpleName());
+    }
+  }
+
+  /** 生成一致性副本、删除副本里的认证信息、压缩本人资料，再轮转旧备份；失败时清理本次半成品。 */
+  public synchronized Map<String, Object> create() throws IOException {
+    FlowLog.step("BACKUP", "开始备份：生成一致性数据库副本，再清除副本中的认证信息", Map.of());
+    Path directory = props.root().resolve("backups");
+    Files.createDirectories(directory);
+    String id = "backup-" + clock.millis() + "-" + UUID.randomUUID().toString().substring(0, 8);
+    Path snapshot = directory.resolve(id + ".db"),
+        sanitized = directory.resolve(id + ".clean.db"),
+        partial = directory.resolve(id + ".partial"),
+        archive = directory.resolve(id + ".zip");
+    try {
+      db.app().execute("VACUUM INTO '" + snapshot.toString().replace("'", "''") + "'");
+      // WAL 模式下不能随便复制正在写的 app.db 文件；VACUUM INTO 由数据库生成一致性副本。
+      var backupDb = new JdbcTemplate(RuntimeConfig.sqlite(snapshot.toString()));
+      backupDb.update("DELETE FROM admin_sessions");
+      backupDb.update("DELETE FROM recovery_codes");
+      backupDb.update("DELETE FROM admin_account");
+      // DELETE 不保证擦除旧页。再次 VACUUM INTO 只复制存活数据，归档从不包含第一次快照。
+      backupDb.execute("VACUUM INTO '" + sanitized.toString().replace("'", "''") + "'");
+      var cleanDb = new JdbcTemplate(RuntimeConfig.sqlite(sanitized.toString()));
+      List<Path> originals = new ArrayList<>();
+      Path sources = props.root().resolve("sources");
+      // 仅收录快照引用的原件；检查名称与内容哈希，缺失或损坏时不生成貌似完整的备份。
+      for (var source :
+          cleanDb.queryForList("SELECT file_name,hash FROM sources ORDER BY file_name")) {
+        String file = Database.text(source, "file_name");
+        if (!file.matches("[a-f0-9-]{36}\\.(md|txt|pdf|docx|json)"))
+          throw new IOException("Invalid stored source name");
+        Path original = sources.resolve(file);
+        if (!Files.isRegularFile(original, LinkOption.NOFOLLOW_LINKS)
+            || !Crypto.hash(original).equals(source.get("hash")))
+          throw new IOException("Missing or damaged source file");
+        originals.add(original);
+      }
+      for (var asset : cleanDb.queryForList("SELECT file_name,hash FROM note_assets")) {
+        String file = Database.text(asset, "file_name");
+        if (!file.matches("[a-f0-9-]{36}")) throw new IOException("Invalid asset name");
+        Path path = props.root().resolve("assets").resolve(file);
+        if (!Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS)
+            || !Crypto.hash(path).equals(asset.get("hash")))
+          throw new IOException("Missing or damaged asset");
+        originals.add(path);
+      }
+      FlowLog.step("BACKUP", "已清理副本认证信息并验证原件哈希，准备压缩", Map.of("sourceCount", originals.size()));
+      long planned = Files.size(sanitized);
+      for (Path path : originals) planned += Files.size(path);
+      if (planned > MAX_TOTAL)
+        throw ApiException.badRequest("BACKUP_TOO_LARGE", "资料超过备份容量限制，请先调整容量或清理资料");
+      Map<String, String> hashes = new LinkedHashMap<>();
+      hashes.put("app.db", Crypto.hash(sanitized));
+      for (Path original : originals)
+        hashes.put(
+            original.getParent().getFileName() + "/" + original.getFileName(),
+            Crypto.hash(original));
+      try (var zip =
+          new ZipOutputStream(Files.newOutputStream(partial, StandardOpenOption.CREATE_NEW))) {
+        zip.putNextEntry(new ZipEntry("app.db"));
+        Files.copy(sanitized, zip);
+        zip.closeEntry();
+        for (Path path : originals) {
+          zip.putNextEntry(new ZipEntry(path.getParent().getFileName() + "/" + path.getFileName()));
+          Files.copy(path, zip);
+          zip.closeEntry();
+        }
+        var versions =
+            cleanDb.queryForList(
+                "SELECT value FROM settings WHERE key='knowledge.active'", String.class);
+        zip.putNextEntry(new ZipEntry("manifest.json"));
+        zip.write(
+            Json.write(
+                    Map.of(
+                        "formatVersion",
+                        2,
+                        "schemaVersion",
+                        SchemaMigrations.version(cleanDb),
+                        "sessionSchemaVersion",
+                        SchemaMigrations.VERSION,
+                        "applicationVersion",
+                        System.getenv().getOrDefault("CLONE_BUILD_REVISION", "development"),
+                        "sha256",
+                        hashes,
+                        "createdAt",
+                        clock.millis(),
+                        "knowledgeVersion",
+                        versions.isEmpty() ? "" : versions.getFirst(),
+                        "excluded",
+                        List.of(
+                            "visitor sessions", "administrator credentials", "API keys", "logs")))
+                .getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        zip.closeEntry();
+      }
+      try {
+        Files.move(partial, archive, StandardCopyOption.ATOMIC_MOVE);
+        // 完整压缩成功后才改成 .zip，下载列表不会将正在写入的 .partial 当作可用备份。
+      } catch (AtomicMoveNotSupportedException ex) {
+        Files.move(partial, archive);
+      }
+      FlowLog.step("BACKUP", "压缩完成并已转为正式归档，开始清理过期备份", Map.of());
+      rotate(directory);
+      LOG.info("stage=BACKUP event=BACKUP_CREATED backupId={}", id);
+      return Map.of(
+          "name",
+          archive.getFileName().toString(),
+          "bytes",
+          Files.size(archive),
+          "createdAt",
+          clock.millis());
+    } catch (Exception ex) {
+      Files.deleteIfExists(archive);
+      Files.deleteIfExists(partial);
+      if (ex instanceof IOException io) throw io;
+      if (ex instanceof RuntimeException runtime) throw runtime;
+      throw new IOException(ex);
+    } finally {
+      Files.deleteIfExists(snapshot);
+      Files.deleteIfExists(directory.resolve(id + ".db-wal"));
+      Files.deleteIfExists(directory.resolve(id + ".db-shm"));
+      Files.deleteIfExists(sanitized);
+      Files.deleteIfExists(directory.resolve(id + ".clean.db-wal"));
+      Files.deleteIfExists(directory.resolve(id + ".clean.db-shm"));
+    }
+  }
+
+  /** 按创建时间删除最早备份，直到份数与总容量同时满足限制；只处理固定命名格式的文件。 */
+  private void rotate(Path directory) throws IOException {
+    List<Path> files;
+    try (var stream = Files.list(directory)) {
+      files =
+          stream
+              .filter(p -> p.getFileName().toString().matches("backup-[0-9]+-[a-f0-9]{8}\\.zip"))
+              .sorted(Comparator.comparing(p -> p.getFileName().toString()))
+              .toList();
+    }
+    long total = 0;
+    for (Path file : files) total += Files.size(file);
+    int remaining = files.size();
+    for (Path file : files) {
+      if (remaining <= 7 && total <= MAX_TOTAL) break;
+      long size = Files.size(file);
+      Files.delete(file);
+      remaining--;
+      total -= size;
+    }
+  }
+
+  public List<Map<String, Object>> list() throws IOException {
+    Path directory = props.root().resolve("backups");
+    if (!Files.isDirectory(directory)) return List.of();
+    try (var stream = Files.list(directory)) {
+      List<Map<String, Object>> result = new ArrayList<>();
+      for (Path file :
+          stream
+              .filter(p -> p.getFileName().toString().matches("backup-[0-9]+-[a-f0-9]{8}\\.zip"))
+              .sorted(Comparator.reverseOrder())
+              .toList())
+        result.add(Map.of("name", file.getFileName().toString(), "bytes", Files.size(file)));
+      return result;
+    }
+  }
+
+  /** 只接受备份文件名白名单，不能利用上级目录片段下载其他文件。 */
+  public Path archive(String name) {
+    if (!name.matches("backup-[0-9]+-[a-f0-9]{8}\\.zip")) throw ApiException.missing();
+    Path path = props.root().resolve("backups").resolve(name);
+    if (!Files.isRegularFile(path)) throw ApiException.missing();
+    return path;
+  }
+}

@@ -1,0 +1,103 @@
+# 默认可在没有模型密钥时启动；敏感值只通过环境变量注入，不写进版本库。
+spring:
+  application:
+    name: clone-me
+  # 虚拟线程适合等待外部服务，但不会替代 ChatService 的并发上限和限流。
+  threads:
+    virtual:
+      enabled: true
+  # 邮件发送设定超时，避免不可达的 SMTP 长时间占住后台任务。
+  mail:
+    properties:
+      mail.smtp.connectiontimeout: 5000
+      mail.smtp.timeout: 5000
+      mail.smtp.writetimeout: 5000
+  # 上传入口与解析器均限制大小；请求上限略大于单文件，容纳表单字段。
+  servlet:
+    multipart:
+      max-file-size: 10MB
+      max-request-size: 12MB
+# 本地仅监听回环地址，公网部署再由容器网络和 Nginx 明确配置访问边界。
+server:
+  address: ${CLONE_BIND_ADDRESS:127.0.0.1}
+  port: ${PORT:8080}
+  error:
+    include-message: never
+    include-stacktrace: never
+  shutdown: graceful
+  tomcat:
+    max-connections: 128
+    accept-count: 32
+    connection-timeout: 10s
+spring.lifecycle.timeout-per-shutdown-phase: 90s
+# 文件使用结构化 JSON，控制台使用便于阅读的格式；两者都可通过请求编号关联阶段。
+logging:
+  # 明确使用 UTF-8，避免 Windows 终端与日志文件采用不同编码导致中文乱码。
+  charset:
+    console: UTF-8
+    file: UTF-8
+  file:
+    name: ${CLONE_LOG_FILE:./logs/clone-me.jsonl}
+  structured:
+    format:
+      file: logstash
+  # 单文件最多 10MB、最多保留七天，所有轮转文件合计上限 100MB。
+  logback:
+    rollingpolicy:
+      max-file-size: 10MB
+      max-history: 7
+      total-size-cap: 100MB
+  pattern:
+    console: "%d{HH:mm:ss.SSS} %-5level [%X{requestId:-startup}] %logger{32} - %msg%n"
+  level:
+    cyou.jujube: INFO
+    # 只开启本项目的教学流程日志，不开启 JDBC/HTTP 调试，避免打印 SQL 参数和请求正文。
+    cyou.jujube.common.FlowLog: ${CLONE_FLOW_LOG_LEVEL:TRACE}
+    org.springframework.ai: WARN
+# 以下字段由 CloneProperties 接收；模型、端点、价格及数据路径集中配置。
+clone:
+  rerank:
+    key: ${RERANK_API_KEY:${SILICONFLOW_API_KEY:}}
+    url: ${RERANK_BASE_URL:${SILICONFLOW_BASE_URL:https://api.siliconflow.cn/v1}}
+    model: ${RERANK_MODEL:BAAI/bge-reranker-v2-m3}
+    input-cny-per-million: ${RERANK_INPUT_CNY_PER_MILLION:-1}
+  operations:
+    production: ${CLONE_PRODUCTION:false}
+    chat-enabled: ${CLONE_CHAT_ENABLED:true}
+    min-free-disk-mb: ${CLONE_MIN_FREE_DISK_MB:256}
+    max-sources: ${CLONE_MAX_SOURCES:200}
+    max-source-mb: ${CLONE_MAX_SOURCE_MB:200}
+    max-queued-jobs: ${CLONE_MAX_QUEUED_JOBS:32}
+    max-active-records: ${CLONE_MAX_ACTIVE_RECORDS:3000}
+    max-releases: ${CLONE_MAX_RELEASES:20}
+    max-database-mb: ${CLONE_MAX_DATABASE_MB:256}
+  data-dir: ${CLONE_DATA_DIR:./data}
+  secure-cookies: ${CLONE_SECURE_COOKIES:false}
+  master-key: ${CLONE_MASTER_KEY:}
+  deepseek-key: ${DEEPSEEK_API_KEY:}
+  deepseek-model: ${DEEPSEEK_MODEL:deepseek-flash}
+  deepseek-url: ${DEEPSEEK_BASE_URL:https://api.deepseek.com/v1}
+  # -1 表示价格未知，BudgetService 会阻止付费请求，避免出现无账目调用。
+  deepseek-input-cny-per-million: ${DEEPSEEK_INPUT_CNY_PER_MILLION:-1}
+  deepseek-output-cny-per-million: ${DEEPSEEK_OUTPUT_CNY_PER_MILLION:-1}
+  embedding-key: ${SILICONFLOW_API_KEY:}
+  embedding-url: ${SILICONFLOW_BASE_URL:https://api.siliconflow.cn/v1}
+  # 免费模型名称固定；端点或模型指纹变化会自动重建已共享笔记索引。
+  embedding-model: BAAI/bge-m3
+  decision-provider: ${DECISION_PROVIDER:disabled}
+  typesafe-key: ${TYPESAFE_API_KEY:}
+  typesafe-model: ${TYPESAFE_MODEL:jev-latest}
+  typesafe-url: ${TYPESAFE_URL:https://api.typesafe.ai/v1/systemone}
+  typesafe-input-cny-per-million: ${TYPESAFE_INPUT_CNY_PER_MILLION:-1}
+  bailian-key: ${DASHSCOPE_API_KEY:}
+  bailian-url: ${BAILIAN_DECISION_URL:}
+  bailian-input-cny-per-million: ${BAILIAN_INPUT_CNY_PER_MILLION:-1}
+  # 每日额度按北京时间自然日计算；累计首次严格超过五元才创建通知。
+  daily-budget-cny: 2
+  lifetime-notify-cny: 5
+  mail-to: ${CLONE_NOTIFY_EMAIL:}
+  mail-from: ${CLONE_MAIL_FROM:}
+  turnstile-key: ${TURNSTILE_SECRET_KEY:}
+  turnstile-site-key: ${TURNSTILE_SITE_KEY:}
+  turnstile-hostname: ${TURNSTILE_HOSTNAME:jujube.cyou}
+  cookie-domain: ${CLONE_COOKIE_DOMAIN:}

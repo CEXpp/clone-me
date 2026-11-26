@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <parent><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-parent</artifactId><version>4.1.1</version><relativePath/></parent>
+  <groupId>cyou.jujube</groupId><artifactId>clone-me</artifactId><version>0.1.0-SNAPSHOT</version>
+  <name>Clone Me</name><description>Evidence-grounded personal interview companion</description>
+  <properties>
+    <java.version>25</java.version>
+    <spring-ai.version>2.0.0</spring-ai.version>
+    <!-- 同一版本线的安全补丁：Tomcat GHSA-9xv2-5v5q-p794 等，Jackson GHSA-cxp5-3px4-pw24 等。 -->
+    <tomcat.version>11.0.25</tomcat.version>
+    <jackson-bom.version>3.1.7</jackson-bom.version>
+    <jackson-2-bom.version>2.21.7</jackson-2-bom.version>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <clone.frontend.dir>${project.basedir}/../frontend/dist</clone.frontend.dir>
+  </properties>
+  <dependencyManagement><dependencies><dependency><groupId>org.springframework.ai</groupId><artifactId>spring-ai-bom</artifactId><version>${spring-ai.version}</version><type>pom</type><scope>import</scope></dependency></dependencies></dependencyManagement>
+  <dependencies>
+    <!-- Spring 启动时就需要 LogFactory。显式声明日志门面，避免只依赖间接依赖导入；版本交给 Boot 管理。 -->
+    <dependency><groupId>commons-logging</groupId><artifactId>commons-logging</artifactId></dependency>
+    <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-webmvc</artifactId></dependency>
+    <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-jdbc</artifactId></dependency>
+    <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-security</artifactId></dependency>
+    <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-validation</artifactId></dependency>
+    <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-mail</artifactId></dependency>
+    <dependency><groupId>org.springframework.ai</groupId><artifactId>spring-ai-openai</artifactId></dependency>
+    <dependency><groupId>org.springframework.ai</groupId><artifactId>spring-ai-client-chat</artifactId></dependency>
+    <dependency><groupId>org.xerial</groupId><artifactId>sqlite-jdbc</artifactId><version>3.53.4.0</version></dependency>
+    <dependency><groupId>org.apache.pdfbox</groupId><artifactId>pdfbox</artifactId><version>3.0.8</version></dependency>
+    <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-test</artifactId><scope>test</scope></dependency>
+    <dependency><groupId>org.springframework.security</groupId><artifactId>spring-security-test</artifactId><scope>test</scope></dependency>
+  </dependencies>
+  <build>
+    <resources>
+      <resource><directory>src/main/resources</directory></resource>
+      <resource><directory>${clone.frontend.dir}</directory><targetPath>static</targetPath></resource>
+    </resources>
+    <plugins>
+      <plugin><groupId>org.springframework.boot</groupId><artifactId>spring-boot-maven-plugin</artifactId></plugin>
+      <!-- 测试临时文件归属构建目录，避免系统临时目录权限和清理策略影响可重复验证。 -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId><artifactId>maven-surefire-plugin</artifactId>
+        <configuration><argLine>-Djava.io.tmpdir="${project.build.directory}"</argLine></configuration>
+      </plugin>
+    </plugins>
+  </build>
+  <profiles>
+    <profile>
+      <id>atelier</id>
+      <properties><clone.frontend.dir>${project.basedir}/../atelier-ui-v1/dist</clone.frontend.dir></properties>
+    </profile>
+    <profile>
+      <id>sbom</id>
+      <build><plugins><plugin>
+        <groupId>org.cyclonedx</groupId><artifactId>cyclonedx-maven-plugin</artifactId><version>2.9.3</version>
+        <configuration><projectType>application</projectType><outputFormat>json</outputFormat><includeTestScope>false</includeTestScope></configuration>
+      </plugin></plugins></build>
+    </profile>
+    <!-- 格式化属于开发工具，主动启用时才解析；不应让工具下载阻断默认项目导入和业务构建。 -->
+    <profile>
+      <id>format</id>
+      <build><plugins><plugin>
+        <groupId>com.spotify.fmt</groupId><artifactId>fmt-maven-plugin</artifactId><version>2.29</version>
+        <!-- 使用已确认阿里云镜像存在、支持 Java 25 语法的版本；只用于开发格式化，不进入应用运行类路径。 -->
+        <dependencies><dependency><groupId>com.google.googlejavaformat</groupId><artifactId>google-java-format</artifactId><version>1.34.1</version></dependency></dependencies>
+      </plugin></plugins></build>
+    </profile>
+  </profiles>
+</project>
