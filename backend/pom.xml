@@ -6,7 +6,7 @@
   <name>Clone Me</name><description>Evidence-grounded personal interview companion</description>
   <properties>
     <java.version>25</java.version>
-    <spring-ai.version>2.0.0</spring-ai.version>
+    <spring-ai.version>2.1.0</spring-ai.version>
     <!-- 同一版本线的安全补丁：Tomcat GHSA-9xv2-5v5q-p794 等，Jackson GHSA-cxp5-3px4-pw24 等。 -->
     <tomcat.version>11.0.25</tomcat.version>
     <jackson-bom.version>3.1.7</jackson-bom.version>
