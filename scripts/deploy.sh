@@ -1,15 +1,20 @@
 #!/usr/bin/env bash
 set -euo pipefail
 source "$(dirname -- "${BASH_SOURCE[0]}")/lib-deploy.sh"
-task_image="${1:?Usage: deploy.sh registry/repository@sha256:digest}"
-immutable_image "$task_image" || { echo 'Use an immutable application image digest.' >&2; exit 1; }
+task_image="${1:?Usage: deploy.sh registry/repository@sha256:digest or local sha256:image-id}"
+immutable_app_image "$task_image" || { echo 'Use an immutable application image reference.' >&2; exit 1; }
 [[ -f "$task_images" ]] || { echo 'Install the release image lock file first.' >&2; exit 1; }
 for task_name in NGINX_IMAGE CERTBOT_IMAGE; do immutable_image "$(image_value "$task_name")" || { echo 'Invalid release image lock.' >&2; exit 1; }; done
 umask 077
+lock_deployment
 task_candidate="$task_root/deploy/.release.env.next"
 task_previous="$task_root/deploy/.previous.env"
 printf 'APP_IMAGE=%s\n' "$task_image" > "$task_candidate"
-docker pull "$task_image"
+if immutable_image "$task_image"; then
+  docker pull "$task_image"
+else
+  docker image inspect "$task_image" >/dev/null
+fi
 task_old_release="$task_release"
 task_release="$task_candidate"
 dc config --quiet

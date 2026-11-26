@@ -55,7 +55,7 @@ jobs:
         working-directory: frontend
         run: |
           npm audit --omit=dev --audit-level=high
-          # Build-only Tailwind 3 findings are reviewed in docs/部署与备份.md.
+          # Keep the build-time dependency report alongside the runtime audit.
           npm audit --json > ../backend/target/npm-build-audit.json || test "$?" -eq 1
       - name: Generate and scan runtime SBOM
         run: |
@@ -97,3 +97,47 @@ jobs:
             backend/target/surefire-reports/*.xml
             frontend/test-results/
             deploy/.images.env
+
+  verify-atelier:
+    name: Verify and package Atelier
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: atelier-ui-v1/package-lock.json
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: maven
+          cache-dependency-path: backend/pom.xml
+      - name: Check and build Atelier
+        working-directory: atelier-ui-v1
+        run: |
+          npm ci --no-audit --no-fund
+          npm run check
+          npm run build
+          npm audit --omit=dev --audit-level=high
+      - name: Verify the Atelier release package
+        run: |
+          mvn -B -ntp -f backend/pom.xml -Patelier clean verify
+          cd backend/target
+          unzip -p clone-me-0.1.0-SNAPSHOT.jar BOOT-INF/classes/static/index.html | grep '<title>PRISM'
+          sha256sum clone-me-0.1.0-SNAPSHOT.jar > clone-me-0.1.0-SNAPSHOT.jar.sha256
+      - name: Check packaged backend and Atelier in Chromium
+        working-directory: atelier-ui-v1
+        run: |
+          npx playwright install chromium
+          npm run test:e2e
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: atelier-release-${{ github.sha }}
+          path: |
+            backend/target/clone-me-0.1.0-SNAPSHOT.jar
+            backend/target/clone-me-0.1.0-SNAPSHOT.jar.sha256

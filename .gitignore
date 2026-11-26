@@ -36,6 +36,7 @@ dist/
 deploy/.release.env*
 deploy/.previous.env
 deploy/.images.env*
+deploy/.operation.lock
 **/test-results/
 **/playwright-report/
 eval/private/
@@ -43,6 +44,19 @@ eval/private/
 # 文档仅在本机整理；已有受跟踪文档也须在提交时显式排除。
 docs/
 **/previews/
+/项目说明.md
+/腾讯云生产部署与运维手册.md
+/atelier-ui-v1/前端说明.md
+/forest-ui-v1/前端说明.md
+/eval/评测说明.md
+
+# 本机编辑器规则和实例专用网关配置
+/.comate/
+/deploy/gateway/
+/deploy/systemd/jujube-gateway-certificates.*
+/scripts/activate-jujube-gateway.sh
+/scripts/stage-jujube-gateway.sh
+/scripts/gateway-certificates.sh
 
 # 本地评测产物与 Python 缓存
 eval/runs/

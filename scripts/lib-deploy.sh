@@ -10,12 +10,21 @@ docker compose version >/dev/null
 [[ -f "$task_config" ]] || { echo "Create deploy/.env first." >&2; exit 1; }
 
 dc() {
-  local task_args=(--env-file "$task_config" --env-file "$task_release")
+  local task_args=(--env-file "$task_config" -f "$task_root/deploy/compose.yml")
+  if [[ -f "$task_release" ]]; then task_args+=(--env-file "$task_release"); fi
   if [[ -f "$task_images" ]]; then task_args+=(--env-file "$task_images"); fi
-  docker compose "${task_args[@]}" -f "$task_root/deploy/compose.yml" "$@"
+  if grep -qx 'CLONE_PRIVATE_INGRESS=true' "$task_config"; then
+    task_args+=(-f "$task_root/deploy/compose.private.yml")
+  fi
+  docker compose "${task_args[@]}" "$@"
 }
 
 immutable_image() { [[ "$1" =~ ^[a-zA-Z0-9./:_-]+@sha256:[a-f0-9]{64}$ ]]; }
+immutable_app_image() { immutable_image "$1" || [[ "$1" =~ ^sha256:[a-f0-9]{64}$ ]]; }
+lock_deployment() {
+  exec 8>"$task_root/deploy/.operation.lock"
+  flock -n 8 || { echo 'A release or rollback is already running.' >&2; return 1; }
+}
 image_value() { sed -n "s/^$1=//p" "$task_images"; }
 config_value() {
   # 捕获配置仅在管道内传递，只打印指定的非敏感路径或域名。

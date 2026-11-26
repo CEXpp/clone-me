@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 source "$(dirname -- "${BASH_SOURCE[0]}")/lib-deploy.sh"
+umask 077
+lock_deployment
 task_previous="$task_root/deploy/.previous.env"
 [[ -f "$task_previous" ]] || { echo 'No previous release is recorded.' >&2; exit 1; }
 task_image="$(sed -n 's/^APP_IMAGE=//p' "$task_previous")"
-immutable_image "$task_image" || { echo 'Invalid previous image reference.' >&2; exit 1; }
+immutable_app_image "$task_image" || { echo 'Invalid previous image reference.' >&2; exit 1; }
 task_current="$task_release"
 dc stop app
 task_release="$task_previous"

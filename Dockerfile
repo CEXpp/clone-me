@@ -3,7 +3,7 @@ FROM ${RUNTIME_IMAGE}
 ARG BUILD_REVISION=development
 LABEL org.opencontainers.image.title="Clone Me" \
       org.opencontainers.image.revision="${BUILD_REVISION}" \
-      cyou.jujube.schema-version="2"
+      cyou.jujube.schema-version="4"
 ENV CLONE_BUILD_REVISION=${BUILD_REVISION} \
     SPRING_PROFILES_ACTIVE=prod \
     CLONE_DATA_DIR=/data \
